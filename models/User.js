@@ -1,0 +1,1 @@
+// fields: password, email, username, createdAt
