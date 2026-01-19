@@ -1,4 +1,4 @@
-// fields: title, description, priority (High/Medium/Low), status, dueDate,
+// fields: title, taskNotes, priority (High/Medium/Low), status, dueDate,
 //         createdAt, updatedAt, userId
 const mongoose = require('mongoose');
 
@@ -7,7 +7,7 @@ const schema = new mongoose.Schema({
         type: String,
         required: true
     },
-    description: {
+    taskNotes: {
         type: String,
         required: false
     },
@@ -18,8 +18,8 @@ const schema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['Pending', 'In Progress', 'Completed'],
-        default: 'Pending'
+        enum: ['Not Started', 'In Progress', 'Completed'],
+        default: 'Not Started'
     },
     dueDate: {
         type: Date,
