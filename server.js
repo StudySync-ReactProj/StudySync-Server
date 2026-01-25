@@ -33,7 +33,6 @@ app.get('/check-users', async (req, res) => {
 mongoose.connect(process.env.MONGO_URI)
     .then((conn) => {
         console.log('✅ Connected to MongoDB');
-        // השורה הזו תגלה לנו את האמת:
         console.log('📂 Current Database Name:', conn.connection.name);
 
         const PORT = process.env.PORT || 5000;
@@ -44,3 +43,8 @@ mongoose.connect(process.env.MONGO_URI)
     .catch((error) => {
         console.error('❌ MongoDB connection error:', error);
     });
+
+// Health check
+app.get("/api/health", (req, res) => {
+    res.json({ ok: true });
+});

@@ -14,31 +14,25 @@ function generateToken(user) {
 
 // Register User
 router.post('/register', async (req, res) => {
-    console.log('👀 1. Register request received!');
-    console.log('📦 2. Data received:', req.body);
 
     try {
         const { username, email, password } = req.body;
 
         // Check for missing fields
         if (!username || !email || !password) {
-            console.log('❌ 3. Missing fields!');
             return res.status(400).json({ message: 'Please add all fields' });
         }
 
         // Check if user exists
         const userExists = await User.findOne({ email });
         if (userExists) {
-            console.log('❌ 4. User already exists!');
             return res.status(400).json({ message: 'User already exists' });
         }
 
         // Hash password
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
-
         // Create user
-        console.log('⏳ 5. Attempting to save to DB...');
         const user = await User.create({
             username,
             email,
@@ -46,8 +40,6 @@ router.post('/register', async (req, res) => {
         });
 
         if (user) {
-            console.log('✅ 6. SUCCESS! User saved with ID:', user._id);
-            console.log('📂 7. Saved in collection:', User.collection.name);
 
             res.status(201).json({
                 _id: user.id,
@@ -56,11 +48,9 @@ router.post('/register', async (req, res) => {
                 token: generateToken(user._id),
             });
         } else {
-            console.log('❌ 8. User not created (unknown error)');
             res.status(400).json({ message: 'Invalid user data' });
         }
     } catch (error) {
-        console.error('🔥 9. Critical Error:', error.message);
         res.status(500).json({ message: error.message });
     }
 });
