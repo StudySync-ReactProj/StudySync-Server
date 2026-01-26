@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const taskRoutes = require('./routes/taskRoutes');
 const userRoutes = require('./routes/userRoutes');
 const eventRoutes = require('./routes/eventRoutes');
+const statsRoutes = require('./routes/statsRoutes');
 require('dotenv').config(); // Load environment variables
 
 const app = express();
@@ -30,6 +31,7 @@ app.get('/check-users', async (req, res) => {
 app.use('/api/tasks', taskRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/events', eventRoutes);
+app.use('/api/stats', statsRoutes);
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGO_URI)
