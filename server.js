@@ -3,6 +3,7 @@ const cors = require('cors');
 const mongoose = require('mongoose');
 const taskRoutes = require('./routes/taskRoutes');
 const userRoutes = require('./routes/userRoutes');
+const eventRoutes = require('./routes/eventRoutes');
 require('dotenv').config(); // Load environment variables
 
 const app = express();
@@ -21,13 +22,14 @@ app.get('/', (req, res) => {
 });
 
 // Placeholders for routes
-app.use('/api/tasks', taskRoutes);
-app.use('/api/users', userRoutes);
 app.get('/check-users', async (req, res) => {
     const User = require('./models/User');
     const allUsers = await User.find({});
     res.json(allUsers);
 });
+app.use('/api/tasks', taskRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/events', eventRoutes);
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGO_URI)
