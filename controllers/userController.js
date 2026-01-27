@@ -71,7 +71,48 @@ const loginUser = async (req, res) => {
     }
 };
 
+// Add Contact Functions
+
+// @desc    Add a new contact to user's list
+// @route   POST /api/users/contacts
+const addContact = async (req, res) => {
+    try {
+        const { name, email, avatar } = req.body;
+        const user = await User.findById(req.user.id);
+
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        // Check if contact email already exists in the list
+        const contactExists = user.contacts.find(c => c.email === email);
+        if (contactExists) {
+            return res.status(400).json({ message: 'Contact already exists' });
+        }
+
+        user.contacts.push({ name, email, avatar });
+        await user.save();
+
+        res.status(201).json(user.contacts);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// @desc    Get user's contact list
+// @route   GET /api/users/contacts
+const getContacts = async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id);
+        res.json(user.contacts);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     registerUser,
     loginUser,
+    addContact,
+    getContacts
 };
