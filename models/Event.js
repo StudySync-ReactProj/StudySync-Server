@@ -8,6 +8,12 @@ const eventSchema = new mongoose.Schema({
   description: {
     type: String,
   },
+  startDateTime: {
+    type: Date,
+  },
+  endDateTime: {
+    type: Date,
+  },
   locationType: {
     type: String,
     enum: ['online', 'offline'],
@@ -44,6 +50,8 @@ const eventSchema = new mongoose.Schema({
   availableSlots: [{
     date: String, // e.g.: "Tue, Dec 9"
     time: String, // e.g.: "2:00 PM–4:00 PM"
+    startDateTime: Date,
+    endDateTime: Date,
     votes: { type: Number, default: 0 }
   }],
   // The slot that was finally selected after coordination

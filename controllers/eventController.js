@@ -16,14 +16,41 @@ const getEvents = async (req, res) => {
 // @route   POST /api/events
 const createEvent = async (req, res) => {
     try {
-        // Spread req.body to get all fields (title, start, end, location, etc.)
-        // And manually set the creator from the auth token
-        const event = await Event.create({
+        console.log('📥 Creating event with body:', JSON.stringify(req.body, null, 2));
+        
+        // Parse date strings to Date objects if they exist
+        const eventData = {
             ...req.body,
             creator: req.user.id,
-        });
+        };
+
+        // Convert ISO string dates to Date objects if provided
+        if (req.body.startDateTime) {
+            eventData.startDateTime = new Date(req.body.startDateTime);
+            console.log('📅 Parsed startDateTime:', eventData.startDateTime);
+        }
+        
+        if (req.body.endDateTime) {
+            eventData.endDateTime = new Date(req.body.endDateTime);
+            console.log('📅 Parsed endDateTime:', eventData.endDateTime);
+        }
+
+        // Parse availableSlots dates if they exist
+        if (req.body.availableSlots && Array.isArray(req.body.availableSlots)) {
+            eventData.availableSlots = req.body.availableSlots.map(slot => ({
+                ...slot,
+                startDateTime: slot.startDateTime ? new Date(slot.startDateTime) : undefined,
+                endDateTime: slot.endDateTime ? new Date(slot.endDateTime) : undefined
+            }));
+            console.log('📅 Parsed availableSlots with dates');
+        }
+
+        const event = await Event.create(eventData);
+        console.log('✅ Event created successfully:', event._id);
+        
         res.status(201).json(event);
     } catch (error) {
+        console.error('❌ Error creating event:', error);
         res.status(400).json({ message: error.message });
     }
 };
@@ -43,9 +70,29 @@ const updateEvent = async (req, res) => {
             return res.status(401).json({ message: 'User not authorized' });
         }
 
+        // Parse date fields if they exist in the update
+        const updateData = { ...req.body };
+        
+        if (req.body.startDateTime) {
+            updateData.startDateTime = new Date(req.body.startDateTime);
+        }
+        
+        if (req.body.endDateTime) {
+            updateData.endDateTime = new Date(req.body.endDateTime);
+        }
+
+        // Parse availableSlots dates if they exist
+        if (req.body.availableSlots && Array.isArray(req.body.availableSlots)) {
+            updateData.availableSlots = req.body.availableSlots.map(slot => ({
+                ...slot,
+                startDateTime: slot.startDateTime ? new Date(slot.startDateTime) : undefined,
+                endDateTime: slot.endDateTime ? new Date(slot.endDateTime) : undefined
+            }));
+        }
+
         const updatedEvent = await Event.findByIdAndUpdate(
             req.params.id,
-            req.body,
+            updateData,
             { new: true }
         );
         res.json(updatedEvent);

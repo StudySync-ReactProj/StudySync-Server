@@ -29,6 +29,7 @@ const schema = new mongoose.Schema({
     // OAuth tokens for Google integration
     googleAccessToken: String,
     googleRefreshToken: String,
+    googleTokenExpiry: Number,
 }, { timestamps: true });
 
 const User = mongoose.model('User', schema);

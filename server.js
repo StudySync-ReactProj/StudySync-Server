@@ -5,6 +5,7 @@ const taskRoutes = require('./routes/taskRoutes');
 const userRoutes = require('./routes/userRoutes');
 const eventRoutes = require('./routes/eventRoutes');
 const statsRoutes = require('./routes/statsRoutes');
+const googleCalendarRoutes = require('./routes/googleCalendarRoutes');
 require('dotenv').config(); // Load environment variables
 
 const app = express();
@@ -32,6 +33,7 @@ app.use('/api/tasks', taskRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/stats', statsRoutes);
+app.use('/api/google-calendar', googleCalendarRoutes);
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGO_URI)
