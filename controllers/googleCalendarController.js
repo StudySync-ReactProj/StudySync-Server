@@ -91,7 +91,16 @@ const handleCallback = async (req, res) => {
 
         // Update user fields
         user.googleAccessToken = tokens.access_token;
-        user.googleRefreshToken = tokens.refresh_token || user.googleRefreshToken;
+        
+        // Preserve existing refresh token if Google doesn't send a new one
+        if (tokens.refresh_token) {
+            user.googleRefreshToken = tokens.refresh_token;
+            console.log('✅ New refresh token received from Google');
+        } else {
+            console.log('⚠️  No refresh token in response (keeping existing one)');
+            console.log('   This is normal if user already authorized before');
+        }
+        
         user.googleTokenExpiry = tokens.expiry_date;
 
         // Save to database
@@ -112,22 +121,39 @@ const handleCallback = async (req, res) => {
 // @route   POST /api/google-calendar/freebusy
 const getFreeBusy = async (req, res) => {
     try {
-        // userId מגיע מה-Middleware או מה-body
-        const { emails, timeMin, timeMax, userId } = req.body;
+        // SECURITY: Always use req.user.id from auth middleware
+        // Never trust userId from request body to prevent users accessing other calendars
+        const { emails, timeMin, timeMax } = req.body;
+        const userId = req.user.id;
 
-        // 1. שליפת המשתמש מה-DB כדי לקבל את ה-Refresh Token
-        const user = await User.findById(userId || req.user.id);
+        console.log('🔒 FreeBusy request for user:', userId);
+
+        // 1. Fetch user from database to get refresh token
+        const user = await User.findById(userId);
         if (!user || !user.googleRefreshToken) {
             return res.status(401).json({ message: 'Google Calendar not connected' });
         }
 
         const oauth2Client = getOAuth2Client();
 
-        // 2. הגדרת Credentials כולל ה-Refresh Token
-        // זה יאפשר לספריה של גוגל לחדש את ה-Access Token בעצמה אם הוא פג
+        // 2. Set credentials including refresh token
+        // This allows Google library to auto-refresh access token if expired
         oauth2Client.setCredentials({
             refresh_token: user.googleRefreshToken,
             access_token: user.googleAccessToken
+        });
+
+        // 3. Listen for token refresh and save new access token
+        oauth2Client.on('tokens', async (tokens) => {
+            if (tokens.access_token) {
+                console.log('🔄 Access token refreshed in getFreeBusy');
+                user.googleAccessToken = tokens.access_token;
+                if (tokens.expiry_date) {
+                    user.googleTokenExpiry = tokens.expiry_date;
+                }
+                await user.save();
+                console.log('✅ Updated access token saved to database');
+            }
         });
 
         const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
@@ -183,6 +209,19 @@ const listGoogleEvents = async (req, res) => {
         oauth2Client.setCredentials({
             access_token: user.googleAccessToken,
             refresh_token: user.googleRefreshToken
+        });
+
+        // Listen for token refresh and save new access token
+        oauth2Client.on('tokens', async (tokens) => {
+            if (tokens.access_token) {
+                console.log('🔄 Access token refreshed in listGoogleEvents');
+                user.googleAccessToken = tokens.access_token;
+                if (tokens.expiry_date) {
+                    user.googleTokenExpiry = tokens.expiry_date;
+                }
+                await user.save();
+                console.log('✅ Updated access token saved to database');
+            }
         });
 
         const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
