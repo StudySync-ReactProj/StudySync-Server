@@ -22,6 +22,7 @@
   "homepage": "https://github.com/StudySync-ReactProj/StudySync-Server#readme",
   "dependencies": {
     "bcryptjs": "^3.0.3",
+    "cores": "^0.8.5",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",

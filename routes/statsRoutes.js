@@ -1,8 +1,10 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const { protect } = require('../middleware/authMiddleware');
-const { getDashboardStats } = require('../controllers/statsController');
 
-router.get('/', protect, getDashboardStats);
+const { getDashboardStats } = require("../controllers/statsController");
+const { protect } = require("../middleware/authMiddleware");
+
+// GET /api/stats
+router.get("/", protect, getDashboardStats);
 
 module.exports = router;
