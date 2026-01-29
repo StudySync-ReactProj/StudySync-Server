@@ -4,9 +4,23 @@ const Event = require('../models/Event');
 // @route   GET /api/events
 const getEvents = async (req, res) => {
     try {
-        // Finds events where the 'creator' matches the logged-in user's ID
-        const events = await Event.find({ creator: req.user.id });
-        res.json(events);
+        // Finds events where the user is either the creator OR a participant
+        const events = await Event.find({
+            $or: [
+                { creator: req.user.id },
+                { 'participants.email': req.user.email }
+            ]
+        });
+        
+        // Add isInvited property to each event for visual distinction in frontend
+        const eventsWithInviteStatus = events.map(event => {
+            const eventObj = event.toObject();
+            // Event is "invited" if the current user is NOT the creator
+            eventObj.isInvited = event.creator.toString() !== req.user.id;
+            return eventObj;
+        });
+        
+        res.json(eventsWithInviteStatus);
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
