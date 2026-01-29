@@ -54,68 +54,157 @@ const getAuthUrl = async (req, res) => {
 // @route   GET /api/google-calendar/auth/google/callback
 const handleCallback = async (req, res) => {
     console.log('--- 🚀 CALLBACK REACHED ---');
+    console.log('Timestamp:', new Date().toISOString());
 
     try {
-        const { code, state } = req.query;
+        const { code, state, error } = req.query;
 
         console.log('📨 Callback received with:');
-        console.log('   - Code:', code ? 'Present' : 'Missing');
+        console.log('   - Code:', code ? `Present (${code.substring(0, 20)}...)` : 'Missing');
         console.log('   - State (User ID):', state);
+        console.log('   - Error from Google:', error || 'None');
+
+        // Check if user denied access
+        if (error) {
+            console.log('❌ User denied access or error from Google:', error);
+            return res.redirect(`${process.env.CLIENT_URL}/CalendarSync?error=access_denied&details=${error}`);
+        }
 
         if (!code) {
             console.log('❌ Missing authorization code');
-            return res.redirect('http://localhost:5173/CalendarSync?error=missing_code');
+            return res.redirect(`${process.env.CLIENT_URL}/CalendarSync?error=missing_code`);
         }
 
         if (!state) {
             console.log('❌ Missing user ID in state');
-            return res.redirect('http://localhost:5173/CalendarSync?error=missing_user_id');
+            return res.redirect(`${process.env.CLIENT_URL}/CalendarSync?error=missing_user_id`);
         }
 
+        console.log('🔄 Step 1: Exchanging code for tokens...');
         // 1. Exchange code for tokens
         const oauth2Client = getOAuth2Client();
-        const { tokens } = await oauth2Client.getToken(code);
-        console.log('✅ Tokens received from Google');
-        console.log('   - Access Token:', tokens.access_token ? 'Present' : 'Missing');
-        console.log('   - Refresh Token:', tokens.refresh_token ? 'Present' : 'Missing');
-        console.log('   - Expiry Date:', tokens.expiry_date);
+        
+        let tokens;
+        try {
+            const tokenResponse = await oauth2Client.getToken(code);
+            tokens = tokenResponse.tokens;
+            console.log('✅ Token exchange successful');
+            console.log('📦 Full tokens object received:', JSON.stringify({
+                has_access_token: !!tokens.access_token,
+                has_refresh_token: !!tokens.refresh_token,
+                has_id_token: !!tokens.id_token,
+                expiry_date: tokens.expiry_date,
+                token_type: tokens.token_type,
+                scope: tokens.scope
+            }, null, 2));
+        } catch (tokenError) {
+            console.error('❌ Token exchange failed:', tokenError.message);
+            console.error('Error details:', tokenError);
+            return res.redirect(`${process.env.CLIENT_URL}/CalendarSync?error=token_exchange_failed`);
+        }
 
-        // 2. Find user and save tokens manually
+        // Detailed token validation
+        console.log('🔍 Token validation:');
+        console.log('   - Access Token:', tokens.access_token ? `Present (length: ${tokens.access_token.length})` : '❌ MISSING');
+        console.log('   - Refresh Token:', tokens.refresh_token ? `Present (length: ${tokens.refresh_token.length})` : '⚠️ MISSING');
+        console.log('   - Expiry Date:', tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : 'Not set');
+        console.log('   - Token Type:', tokens.token_type || 'Not set');
+        console.log('   - Scope:', tokens.scope || 'Not set');
+
+        if (!tokens.access_token) {
+            console.error('❌ CRITICAL: No access token received from Google!');
+            return res.redirect(`${process.env.CLIENT_URL}/CalendarSync?error=no_access_token`);
+        }
+
+        console.log('🔄 Step 2: Finding user in database...');
+        // 2. Find user by ID from state parameter
         const user = await User.findById(state);
 
         if (!user) {
-            console.log('❌ USER NOT FOUND IN DB:', state);
-            return res.redirect('http://localhost:5173/CalendarSync?error=user_not_found');
+            console.log('❌ USER NOT FOUND IN DB with ID:', state);
+            return res.redirect(`${process.env.CLIENT_URL}/CalendarSync?error=user_not_found`);
         }
 
-        console.log('👤 User found:', user.username, '(', user.email, ')');
+        console.log('✅ User found in database:');
+        console.log('   - ID:', user._id);
+        console.log('   - Username:', user.username);
+        console.log('   - Email:', user.email);
+        console.log('   - Current googleAccessToken:', user.googleAccessToken ? 'EXISTS' : 'NULL');
+        console.log('   - Current googleRefreshToken:', user.googleRefreshToken ? 'EXISTS' : 'NULL');
 
-        // Update user fields
+        console.log('🔄 Step 3: Updating user document with tokens...');
+        // 3. Update user fields with new tokens
+        const oldAccessToken = user.googleAccessToken;
+        const oldRefreshToken = user.googleRefreshToken;
+        const oldExpiry = user.googleTokenExpiry;
+
         user.googleAccessToken = tokens.access_token;
+        user.googleTokenExpiry = tokens.expiry_date;
         
-        // Preserve existing refresh token if Google doesn't send a new one
+        // Handle refresh token (crucial for long-term access)
         if (tokens.refresh_token) {
             user.googleRefreshToken = tokens.refresh_token;
-            console.log('✅ New refresh token received from Google');
+            console.log('✅ NEW refresh token received and set');
         } else {
-            console.log('⚠️  No refresh token in response (keeping existing one)');
-            console.log('   This is normal if user already authorized before');
+            console.log('⚠️  No refresh token in response');
+            if (!user.googleRefreshToken) {
+                console.log('❌ CRITICAL: No existing refresh token and none received!');
+                console.log('   This means the user won\'t be able to refresh access tokens.');
+                console.log('   User must re-authorize with prompt=consent to get a new refresh token.');
+                // We'll still save the access token, but warn about the issue
+            } else {
+                console.log('✅ Preserving existing refresh token (this is normal on subsequent authorizations)');
+            }
         }
+
+        console.log('📝 Token changes:');
+        console.log('   - Access Token:', oldAccessToken === user.googleAccessToken ? 'UNCHANGED' : 'UPDATED');
+        console.log('   - Refresh Token:', oldRefreshToken === user.googleRefreshToken ? 'UNCHANGED' : 'UPDATED');
+        console.log('   - Expiry:', oldExpiry === user.googleTokenExpiry ? 'UNCHANGED' : `${oldExpiry} → ${user.googleTokenExpiry}`);
+
+        console.log('🔄 Step 4: Saving to database...');
+        // 4. Save to database with validation
+        try {
+            const savedUser = await user.save();
+            console.log('✅ DATABASE SAVE SUCCESSFUL!');
+            console.log('   - Document ID:', savedUser._id);
+            console.log('   - Username:', savedUser.username);
+            console.log('   - googleAccessToken saved:', !!savedUser.googleAccessToken ? 'YES ✅' : 'NO ❌');
+            console.log('   - googleRefreshToken saved:', !!savedUser.googleRefreshToken ? 'YES ✅' : 'NO ❌');
+            console.log('   - googleTokenExpiry saved:', savedUser.googleTokenExpiry || 'NULL');
+
+            // Verify the save by querying the database again
+            console.log('🔄 Step 5: Verifying database save...');
+            const verifyUser = await User.findById(state);
+            console.log('✅ Verification query result:');
+            console.log('   - googleAccessToken exists:', !!verifyUser.googleAccessToken);
+            console.log('   - googleRefreshToken exists:', !!verifyUser.googleRefreshToken);
+            console.log('   - googleTokenExpiry:', verifyUser.googleTokenExpiry);
+
+            if (!verifyUser.googleAccessToken || !verifyUser.googleRefreshToken) {
+                console.error('❌ WARNING: Tokens not found in verification query!');
+                console.error('   Database save may have failed silently.');
+            }
+
+        } catch (saveError) {
+            console.error('❌ DATABASE SAVE FAILED!');
+            console.error('   Error name:', saveError.name);
+            console.error('   Error message:', saveError.message);
+            console.error('   Stack trace:', saveError.stack);
+            return res.redirect(`${process.env.CLIENT_URL}/CalendarSync?error=database_save_failed`);
+        }
+
+        console.log('✅ ALL STEPS COMPLETED SUCCESSFULLY');
+        console.log('🎉 Redirecting to frontend with success flag...');
+        res.redirect(`${process.env.CLIENT_URL}/CalendarSync?googleConnected=true`);
         
-        user.googleTokenExpiry = tokens.expiry_date;
-
-        // Save to database
-        await user.save();
-        console.log('✅ DATABASE UPDATED FOR:', user.username);
-        console.log('   - googleAccessToken saved:', !!user.googleAccessToken);
-        console.log('   - googleRefreshToken saved:', !!user.googleRefreshToken);
-        console.log('   - googleTokenExpiry saved:', user.googleTokenExpiry);
-
-        res.redirect('http://localhost:5173/CalendarSync?googleConnected=true');
     } catch (error) {
-        console.error('❌ CALLBACK ERROR:', error.message);
-        console.error('Full error:', error);
-        res.redirect('http://localhost:5173/CalendarSync?error=oauth_failed');
+        console.error('❌ UNEXPECTED ERROR IN CALLBACK:');
+        console.error('   Error name:', error.name);
+        console.error('   Error message:', error.message);
+        console.error('   Stack trace:', error.stack);
+        console.error('   Full error object:', JSON.stringify(error, null, 2));
+        res.redirect(`${process.env.CLIENT_URL}/CalendarSync?error=oauth_failed`);
     }
 };
 // @desc    Get free/busy information for a list of emails

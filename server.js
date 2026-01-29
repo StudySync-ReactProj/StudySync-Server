@@ -8,11 +8,34 @@ const statsRoutes = require('./routes/statsRoutes');
 const googleCalendarRoutes = require('./routes/googleCalendarRoutes');
 require('dotenv').config(); // Load environment variables
 
+// Validate required environment variables
+const requiredEnvVars = [
+    'MONGO_URI',
+    'JWT_SECRET',
+    'GOOGLE_CLIENT_ID',
+    'GOOGLE_CLIENT_SECRET',
+    'GOOGLE_REDIRECT_URI',
+    'CLIENT_URL'
+];
+
+const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
+
+if (missingEnvVars.length > 0) {
+    console.error('❌ CRITICAL ERROR: Missing required environment variables:');
+    missingEnvVars.forEach(varName => {
+        console.error(`   - ${varName}`);
+    });
+    console.error('\n💡 Please add these variables to your .env file and restart the server.');
+    process.exit(1); // Exit with error code
+}
+
+console.log('✅ All required environment variables are present');
+
 const app = express();
 
 // Middleware
 app.use(cors({
-  origin: "http://localhost:5173",
+  origin: process.env.CLIENT_URL || "http://localhost:5173",
   credentials: true,
 }));
 app.use(express.json());
