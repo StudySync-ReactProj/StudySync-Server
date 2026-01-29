@@ -105,21 +105,26 @@ const updateEvent = async (req, res) => {
 // @route   DELETE /api/events/:id
 const deleteEvent = async (req, res) => {
     try {
+        // 1. Fetch the event by its ID
         const event = await Event.findById(req.params.id);
 
+        // 2. Check if event exists
         if (!event) {
             return res.status(404).json({ message: 'Event not found' });
         }
 
-        // Check ownership
+        // 3. Validate ownership - compare event.creator with req.user.id
         if (event.creator.toString() !== req.user.id) {
-            return res.status(401).json({ message: 'User not authorized' });
+            return res.status(403).json({ message: 'Unauthorized: Only the creator can delete this event' });
         }
 
+        // 4. Proceed with deletion if authorized
         await event.deleteOne();
         res.json({ id: req.params.id, message: 'Event removed' });
     } catch (error) {
-        res.status(400).json({ message: error.message });
+        // 5. Comprehensive error handling to prevent server crashes
+        console.error('Error deleting event:', error);
+        res.status(500).json({ message: error.message });
     }
 };
 
