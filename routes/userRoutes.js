@@ -12,12 +12,20 @@ const {
 // IMPORTANT: Import the protect middleware to secure your contact routes
 const { protect } = require('../middleware/authMiddleware');
 
-// Public routes
-router.post('/register', registerUser);
-router.post('/login', loginUser);
+// Import validation middleware and validators
+const { validate } = require('../middleware/validationMiddleware');
+const { 
+    registerValidation, 
+    loginValidation, 
+    addContactValidation 
+} = require('../middleware/validators');
 
-// Private routes (protected by JWT)
-router.post('/contacts', protect, addContact);
+// Public routes with validation
+router.post('/register', registerValidation, validate, registerUser);
+router.post('/login', loginValidation, validate, loginUser);
+
+// Private routes (protected by JWT) with validation
+router.post('/contacts', protect, addContactValidation, validate, addContact);
 router.get('/contacts', protect, getContacts);
 
 module.exports = router;

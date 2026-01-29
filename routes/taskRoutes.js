@@ -8,12 +8,19 @@ const {
     deleteTask 
 } = require('../controllers/taskController');
 
+// Import validation middleware and validators
+const { validate } = require('../middleware/validationMiddleware');
+const { 
+    createTaskValidation, 
+    updateTaskValidation 
+} = require('../middleware/validators');
+
 router.route('/')
     .get(protect, getTasks)
-    .post(protect, createTask);
+    .post(protect, createTaskValidation, validate, createTask);
 
 router.route('/:id')
-    .put(protect, updateTask)
+    .put(protect, updateTaskValidation, validate, updateTask)
     .delete(protect, deleteTask);
 
 module.exports = router;

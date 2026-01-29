@@ -15,10 +15,7 @@ const registerUser = async (req, res) => {
     try {
         const { username, email, password } = req.body;
 
-        if (!username || !email || !password) {
-            return res.status(400).json({ message: 'Please add all fields' });
-        }
-
+        // Validation is now handled by express-validator middleware
         const userExists = await User.findOne({ email });
         if (userExists) {
             return res.status(400).json({ message: 'User already exists' });
