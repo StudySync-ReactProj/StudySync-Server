@@ -26,6 +26,8 @@ const schema = new mongoose.Schema({
         email: String,
         avatar: String, // First letter of the name or URL to an image
     }],
+    // Daily study goal in minutes
+    dailyGoalMinutes: { type: Number, default: 60 },
     // OAuth tokens for Google integration
     googleAccessToken: String,
     googleRefreshToken: String,

@@ -35,19 +35,19 @@ const app = express();
 
 // Middleware
 app.use(cors({
-  origin: process.env.CLIENT_URL || "http://localhost:5173",
-  credentials: true,
+    origin: process.env.CLIENT_URL || "http://localhost:5173",
+    credentials: true,
 }));
 app.use(express.json());
 app.use((req, res, next) => {
-  const start = Date.now();
+    const start = Date.now();
 
-  res.on("finish", () => {
-    const ms = Date.now() - start;
-    console.log(`${req.method} ${req.originalUrl} -> ${res.statusCode} (${ms}ms)`);
-  });
+    res.on("finish", () => {
+        const ms = Date.now() - start;
+        console.log(`${req.method} ${req.originalUrl} -> ${res.statusCode} (${ms}ms)`);
+    });
 
-  next();
+    next();
 });
 
 
@@ -87,3 +87,6 @@ mongoose.connect(process.env.MONGO_URI)
 app.get("/api/health", (req, res) => {
     res.json({ ok: true });
 });
+
+const progressRoutes = require("./routes/progressRoutes");
+app.use("/api/progress", progressRoutes);
