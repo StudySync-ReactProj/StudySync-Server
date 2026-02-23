@@ -35,8 +35,9 @@ const getAuthUrl = async (req, res) => {
         const url = oauth2Client.generateAuthUrl({
             access_type: 'offline',
             scope: [
-                'https://www.googleapis.com/auth/calendar.readonly',
-                'https://www.googleapis.com/auth/calendar.freebusy'
+                'https://www.googleapis.com/auth/calendar.readonly', // Read-only access to Calendar (can be changed to full access if needed)
+                'https://www.googleapis.com/auth/calendar.events', // Access to manage calendar events
+                'https://www.googleapis.com/auth/calendar.freebusy' // Access to free/busy information
             ],
             prompt: 'consent',
             state: userId // Pass user ID to callback

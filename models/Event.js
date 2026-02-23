@@ -64,6 +64,9 @@ const eventSchema = new mongoose.Schema({
     enum: ['Draft', 'Scheduled', 'Cancelled', 'Completed'],
     default: 'Draft'
   },
+  googleEventId: {
+    type: String // svaes the google event id for syncing purposes
+  },
   creator: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
