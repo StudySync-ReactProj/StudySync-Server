@@ -200,97 +200,6 @@ const createEvent = async (req, res) => {
 
 // @desc    Update an event
 // @route   PUT /api/events/:id
-// const updateEvent = async (req, res) => {
-//     try {
-//         const event = await Event.findById(req.params.id);
-
-//         if (!event) {
-//             return res.status(404).json({ message: 'Event not found' });
-//         }
-
-//         // Check if the logged-in user is the creator
-//         if (event.creator.toString() !== req.user.id) {
-//             return res.status(401).json({ message: 'User not authorized' });
-//         }
-
-//         // Parse date fields if they exist in the update
-//         const updateData = { ...req.body };
-
-//         if (req.body.startDateTime) updateData.startDateTime = new Date(req.body.startDateTime);
-//         if (req.body.endDateTime) updateData.endDateTime = new Date(req.body.endDateTime);
-
-//         if (req.body.availableSlots && Array.isArray(req.body.availableSlots)) {
-//             updateData.availableSlots = req.body.availableSlots.map(slot => ({
-//                 ...slot,
-//                 startDateTime: slot.startDateTime ? new Date(slot.startDateTime) : undefined,
-//                 endDateTime: slot.endDateTime ? new Date(slot.endDateTime) : undefined
-//             }));
-//         }
-
-//         // 1. Update the event in the local database
-//         const updatedEvent = await Event.findByIdAndUpdate(
-//             req.params.id,
-//             updateData,
-//             { new: true }
-//         );
-
-//         // 2. Sync the update to Google Calendar (if connection exists and there's a Google event ID)
-//         if (req.user.googleRefreshToken && updatedEvent.googleEventId && updatedEvent.startDateTime && updatedEvent.endDateTime && updatedEvent.status !== 'Draft') {
-//             try {
-//                 console.log('🔄 Attempting to update event in Google Calendar...');
-
-//                 const oauth2Client = new OAuth2Client(
-//                     process.env.GOOGLE_CLIENT_ID,
-//                     process.env.GOOGLE_CLIENT_SECRET,
-//                     process.env.GOOGLE_REDIRECT_URI
-//                 );
-
-//                 oauth2Client.setCredentials({
-//                     refresh_token: req.user.googleRefreshToken,
-//                     access_token: req.user.googleAccessToken
-//                 });
-
-//                 const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
-
-//                 const attendees = updatedEvent.participants 
-//                     ? updatedEvent.participants.map(p => ({ email: p.email })) 
-//                     : [];
-
-//                 // Use patch for partial/full update of event details
-//                 await calendar.events.patch({
-//                     calendarId: 'primary',
-//                     eventId: updatedEvent.googleEventId,
-//                     resource: {
-//                         summary: updatedEvent.title,
-//                         description: updatedEvent.description || '',
-//                         start: {
-//                             dateTime: updatedEvent.startDateTime.toISOString(),
-//                             timeZone: 'Asia/Jerusalem',
-//                         },
-//                         end: {
-//                             dateTime: updatedEvent.endDateTime.toISOString(),
-//                             timeZone: 'Asia/Jerusalem',
-//                         },
-//                         location: updatedEvent.location || '',
-//                         attendees: attendees,
-//                     },
-//                     sendUpdates: 'all' // Sends update email to all participants about time/location changes
-//                 });
-
-//                 console.log('✅ Successfully updated event in Google Calendar');
-//             } catch (googleError) {
-//                 console.error('❌ Failed to update Google Calendar:', googleError.message);
-//             }
-//         }
-
-//         res.json(updatedEvent);
-//     } catch (error) {
-//         res.status(400).json({ message: error.message });
-//     }
-// };
-
-// @desc    Update an event
-// @route   PUT /api/events/:id
 const updateEvent = async (req, res) => {
     try {
         const event = await Event.findById(req.params.id);
@@ -299,12 +208,12 @@ const updateEvent = async (req, res) => {
             return res.status(404).json({ message: 'Event not found' });
         }
 
-        // מוודאים שרק היוצר יכול לעדכן
+        // Check that only the creator can update
         if (event.creator.toString() !== req.user.id) {
             return res.status(401).json({ message: 'User not authorized' });
         }
 
-        // 1. קודם כל, מעדכנים את האירוע במסד הנתונים המקומי שלנו
+        // 1. First, update the event in our local database
         const updateData = { ...req.body };
 
         if (req.body.startDateTime) {
@@ -314,7 +223,7 @@ const updateEvent = async (req, res) => {
             updateData.endDateTime = new Date(req.body.endDateTime);
         }
 
-        // עדכון משבצות זמן אם יש
+        // Update time slots if they exist
         if (req.body.availableSlots && Array.isArray(req.body.availableSlots)) {
             updateData.availableSlots = req.body.availableSlots.map(slot => ({
                 ...slot,
@@ -329,8 +238,8 @@ const updateEvent = async (req, res) => {
             { new: true }
         );
 
-        // 2. סנכרון העדכון מול גוגל קלנדר!
-        // אנחנו בודקים שיש למשתמש טוקן חיבור, ושלמשתמש יש googleEventId (כלומר האירוע הזה אכן קיים בגוגל)
+        // 2. Sync the update with Google Calendar!
+        // We check that the user has a refresh token, and that the event has a googleEventId (meaning this event exists in Google Calendar)
         if (req.user.googleRefreshToken && event.googleEventId && updatedEvent.startDateTime && updatedEvent.endDateTime) {
             try {
                 console.log('🔄 Attempting to sync update to Google Calendar...');
@@ -351,16 +260,16 @@ const updateEvent = async (req, res) => {
 
                 const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-                // שימוש ב-patch לעדכון פרטי האירוע בגוגל
+                // Use patch to update event details in Google Calendar
                 await calendar.events.patch({
                     calendarId: 'primary',
-                    eventId: event.googleEventId, // חובה: המזהה שגוגל נתנה לאירוע כשיצרנו אותו
+                    eventId: event.googleEventId, // Required: the ID that Google gave to the event when we created it
                     resource: {
                         summary: updatedEvent.title,
                         description: updatedEvent.description || '',
                         start: {
                             dateTime: updatedEvent.startDateTime.toISOString(),
-                            timeZone: 'Asia/Jerusalem', // חשוב לשמור על אזור הזמן
+                            timeZone: 'Asia/Jerusalem', // Important to maintain the timezone
                         },
                         end: {
                             dateTime: updatedEvent.endDateTime.toISOString(),
@@ -368,18 +277,18 @@ const updateEvent = async (req, res) => {
                         },
                         location: updatedEvent.location || '',
                     },
-                    sendUpdates: 'all' // בונוס: שולח אוטומטית עדכון למייל של שאר המשתתפים שהשעה השתנתה
+                    sendUpdates: 'all' // Bonus: automatically sends update email to other participants that the time has changed
                 });
 
                 console.log('✅ Successfully updated event in Google Calendar');
             } catch (googleError) {
-                // במקרה שגוגל החזירה שגיאה, אנחנו רק מדפיסים אותה ולא מפילים את השרת, 
-                // כי האירוע המקומי שלנו כבר עודכן בהצלחה
+                // If Google returns an error, we only log it and don't fail the server, 
+                // because our local event has already been successfully updated
                 console.error('❌ Failed to update Google Calendar:', googleError.message);
             }
         }
 
-        // 3. מחזירים ללקוח את האירוע המעודכן
+        // 3. Return the updated event to the client
         res.json(updatedEvent);
     } catch (error) {
         console.error('Error updating event:', error);
