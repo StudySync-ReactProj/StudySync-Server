@@ -13,18 +13,18 @@ const getEvents = async (req, res) => {
                 { 'participants.email': req.user.email }
             ]
         });
-        
+
         // Lazy Sync: Update participant RSVP statuses from Google Calendar if connected
         if (req.user.googleRefreshToken) {
             try {
                 console.log('🔄 Syncing RSVP statuses from Google Calendar...');
-                
+
                 const oauth2Client = new OAuth2Client(
                     process.env.GOOGLE_CLIENT_ID,
                     process.env.GOOGLE_CLIENT_SECRET,
                     process.env.GOOGLE_REDIRECT_URI
                 );
-                
+
                 oauth2Client.setCredentials({
                     refresh_token: req.user.googleRefreshToken,
                     access_token: req.user.googleAccessToken
@@ -82,14 +82,14 @@ const getEvents = async (req, res) => {
                         console.error(`❌ Failed to sync event ${event.googleEventId}:`, eventError.message);
                     }
                 }
-                
+
                 console.log('✅ RSVP sync completed');
             } catch (syncError) {
                 // Log sync errors but don't fail the entire request
                 console.error('❌ Error during Google Calendar sync:', syncError.message);
             }
         }
-        
+
         // Add isInvited property to each event for visual distinction in frontend
         const eventsWithInviteStatus = events.map(event => {
             const eventObj = event.toObject();
@@ -97,7 +97,7 @@ const getEvents = async (req, res) => {
             eventObj.isInvited = event.creator.toString() !== req.user.id;
             return eventObj;
         });
-        
+
         res.json(eventsWithInviteStatus);
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -109,7 +109,7 @@ const getEvents = async (req, res) => {
 const createEvent = async (req, res) => {
     try {
         console.log('📥 Creating event with body:', JSON.stringify(req.body, null, 2));
-        
+
         // step 1: Prepare event data for local database
         const eventData = {
             ...req.body,
@@ -142,7 +142,7 @@ const createEvent = async (req, res) => {
                     process.env.GOOGLE_CLIENT_SECRET,
                     process.env.GOOGLE_REDIRECT_URI
                 );
-                
+
                 oauth2Client.setCredentials({
                     refresh_token: req.user.googleRefreshToken,
                     access_token: req.user.googleAccessToken
@@ -152,10 +152,10 @@ const createEvent = async (req, res) => {
                 const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
                 // creating attendees list for google calendar - we only need their emails, google will handle the rest
-                const attendees = event.participants 
-                    ? event.participants.map(p => ({ email: p.email })) 
+                const attendees = event.participants
+                    ? event.participants.map(p => ({ email: p.email }))
                     : [];
-                
+
                 const googleEvent = {
                     summary: event.title,
                     description: event.description || '',
@@ -186,17 +186,108 @@ const createEvent = async (req, res) => {
                 await event.save();
                 console.log('✅ Successfully synced to Google Calendar with ID:', response.data.id);
             } catch (googleError) {
-              // If syncing with Google Calendar fails, we log the error but we don't want to fail the entire event creation process since the event is already created locally
+                // If syncing with Google Calendar fails, we log the error but we don't want to fail the entire event creation process since the event is already created locally
                 console.error('❌ Failed to sync with Google Calendar:', googleError.message);
             }
         }
-        
+
         res.status(201).json(event);
     } catch (error) {
         console.error('❌ Error creating event:', error);
         res.status(400).json({ message: error.message });
     }
 };
+
+// @desc    Update an event
+// @route   PUT /api/events/:id
+// const updateEvent = async (req, res) => {
+//     try {
+//         const event = await Event.findById(req.params.id);
+
+//         if (!event) {
+//             return res.status(404).json({ message: 'Event not found' });
+//         }
+
+//         // Check if the logged-in user is the creator
+//         if (event.creator.toString() !== req.user.id) {
+//             return res.status(401).json({ message: 'User not authorized' });
+//         }
+
+//         // Parse date fields if they exist in the update
+//         const updateData = { ...req.body };
+
+//         if (req.body.startDateTime) updateData.startDateTime = new Date(req.body.startDateTime);
+//         if (req.body.endDateTime) updateData.endDateTime = new Date(req.body.endDateTime);
+
+//         if (req.body.availableSlots && Array.isArray(req.body.availableSlots)) {
+//             updateData.availableSlots = req.body.availableSlots.map(slot => ({
+//                 ...slot,
+//                 startDateTime: slot.startDateTime ? new Date(slot.startDateTime) : undefined,
+//                 endDateTime: slot.endDateTime ? new Date(slot.endDateTime) : undefined
+//             }));
+//         }
+
+//         // 1. Update the event in the local database
+//         const updatedEvent = await Event.findByIdAndUpdate(
+//             req.params.id,
+//             updateData,
+//             { new: true }
+//         );
+
+//         // 2. Sync the update to Google Calendar (if connection exists and there's a Google event ID)
+//         if (req.user.googleRefreshToken && updatedEvent.googleEventId && updatedEvent.startDateTime && updatedEvent.endDateTime && updatedEvent.status !== 'Draft') {
+//             try {
+//                 console.log('🔄 Attempting to update event in Google Calendar...');
+
+//                 const oauth2Client = new OAuth2Client(
+//                     process.env.GOOGLE_CLIENT_ID,
+//                     process.env.GOOGLE_CLIENT_SECRET,
+//                     process.env.GOOGLE_REDIRECT_URI
+//                 );
+
+//                 oauth2Client.setCredentials({
+//                     refresh_token: req.user.googleRefreshToken,
+//                     access_token: req.user.googleAccessToken
+//                 });
+
+//                 const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+//                 const attendees = updatedEvent.participants 
+//                     ? updatedEvent.participants.map(p => ({ email: p.email })) 
+//                     : [];
+
+//                 // Use patch for partial/full update of event details
+//                 await calendar.events.patch({
+//                     calendarId: 'primary',
+//                     eventId: updatedEvent.googleEventId,
+//                     resource: {
+//                         summary: updatedEvent.title,
+//                         description: updatedEvent.description || '',
+//                         start: {
+//                             dateTime: updatedEvent.startDateTime.toISOString(),
+//                             timeZone: 'Asia/Jerusalem',
+//                         },
+//                         end: {
+//                             dateTime: updatedEvent.endDateTime.toISOString(),
+//                             timeZone: 'Asia/Jerusalem',
+//                         },
+//                         location: updatedEvent.location || '',
+//                         attendees: attendees,
+//                     },
+//                     sendUpdates: 'all' // Sends update email to all participants about time/location changes
+//                 });
+
+//                 console.log('✅ Successfully updated event in Google Calendar');
+//             } catch (googleError) {
+//                 console.error('❌ Failed to update Google Calendar:', googleError.message);
+//             }
+//         }
+
+//         res.json(updatedEvent);
+//     } catch (error) {
+//         res.status(400).json({ message: error.message });
+//     }
+// };
 
 // @desc    Update an event
 // @route   PUT /api/events/:id
@@ -208,17 +299,22 @@ const updateEvent = async (req, res) => {
             return res.status(404).json({ message: 'Event not found' });
         }
 
-        // Check if the logged-in user is the creator
+        // מוודאים שרק היוצר יכול לעדכן
         if (event.creator.toString() !== req.user.id) {
             return res.status(401).json({ message: 'User not authorized' });
         }
 
-        // Parse date fields if they exist in the update
+        // 1. קודם כל, מעדכנים את האירוע במסד הנתונים המקומי שלנו
         const updateData = { ...req.body };
-        
-        if (req.body.startDateTime) updateData.startDateTime = new Date(req.body.startDateTime);
-        if (req.body.endDateTime) updateData.endDateTime = new Date(req.body.endDateTime);
 
+        if (req.body.startDateTime) {
+            updateData.startDateTime = new Date(req.body.startDateTime);
+        }
+        if (req.body.endDateTime) {
+            updateData.endDateTime = new Date(req.body.endDateTime);
+        }
+
+        // עדכון משבצות זמן אם יש
         if (req.body.availableSlots && Array.isArray(req.body.availableSlots)) {
             updateData.availableSlots = req.body.availableSlots.map(slot => ({
                 ...slot,
@@ -227,24 +323,27 @@ const updateEvent = async (req, res) => {
             }));
         }
 
-        // 1. Update the event in the local database
         const updatedEvent = await Event.findByIdAndUpdate(
             req.params.id,
             updateData,
             { new: true }
         );
 
-        // 2. Sync the update to Google Calendar (if connection exists and there's a Google event ID)
-        if (req.user.googleRefreshToken && updatedEvent.googleEventId && updatedEvent.startDateTime && updatedEvent.endDateTime && updatedEvent.status !== 'Draft') {
+        // 2. סנכרון העדכון מול גוגל קלנדר!
+        // אנחנו בודקים שיש למשתמש טוקן חיבור, ושלמשתמש יש googleEventId (כלומר האירוע הזה אכן קיים בגוגל)
+        if (req.user.googleRefreshToken && event.googleEventId && updatedEvent.startDateTime && updatedEvent.endDateTime) {
             try {
-                console.log('🔄 Attempting to update event in Google Calendar...');
-                
+                console.log('🔄 Attempting to sync update to Google Calendar...');
+
+                const { google } = require('googleapis');
+                const { OAuth2Client } = require('google-auth-library');
+
                 const oauth2Client = new OAuth2Client(
                     process.env.GOOGLE_CLIENT_ID,
                     process.env.GOOGLE_CLIENT_SECRET,
                     process.env.GOOGLE_REDIRECT_URI
                 );
-                
+
                 oauth2Client.setCredentials({
                     refresh_token: req.user.googleRefreshToken,
                     access_token: req.user.googleAccessToken
@@ -252,39 +351,38 @@ const updateEvent = async (req, res) => {
 
                 const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-                const attendees = updatedEvent.participants 
-                    ? updatedEvent.participants.map(p => ({ email: p.email })) 
-                    : [];
-
-                // Use patch for partial/full update of event details
+                // שימוש ב-patch לעדכון פרטי האירוע בגוגל
                 await calendar.events.patch({
                     calendarId: 'primary',
-                    eventId: updatedEvent.googleEventId,
+                    eventId: event.googleEventId, // חובה: המזהה שגוגל נתנה לאירוע כשיצרנו אותו
                     resource: {
                         summary: updatedEvent.title,
                         description: updatedEvent.description || '',
                         start: {
                             dateTime: updatedEvent.startDateTime.toISOString(),
-                            timeZone: 'Asia/Jerusalem',
+                            timeZone: 'Asia/Jerusalem', // חשוב לשמור על אזור הזמן
                         },
                         end: {
                             dateTime: updatedEvent.endDateTime.toISOString(),
                             timeZone: 'Asia/Jerusalem',
                         },
                         location: updatedEvent.location || '',
-                        attendees: attendees,
                     },
-                    sendUpdates: 'all' // Sends update email to all participants about time/location changes
+                    sendUpdates: 'all' // בונוס: שולח אוטומטית עדכון למייל של שאר המשתתפים שהשעה השתנתה
                 });
-                
+
                 console.log('✅ Successfully updated event in Google Calendar');
             } catch (googleError) {
+                // במקרה שגוגל החזירה שגיאה, אנחנו רק מדפיסים אותה ולא מפילים את השרת, 
+                // כי האירוע המקומי שלנו כבר עודכן בהצלחה
                 console.error('❌ Failed to update Google Calendar:', googleError.message);
             }
         }
 
+        // 3. מחזירים ללקוח את האירוע המעודכן
         res.json(updatedEvent);
     } catch (error) {
+        console.error('Error updating event:', error);
         res.status(400).json({ message: error.message });
     }
 };
@@ -313,13 +411,13 @@ const deleteEvent = async (req, res) => {
         if (req.user.googleRefreshToken && event.googleEventId) {
             try {
                 console.log('🔄 Attempting to delete event from Google Calendar...');
-                
+
                 const oauth2Client = new OAuth2Client(
                     process.env.GOOGLE_CLIENT_ID,
                     process.env.GOOGLE_CLIENT_SECRET,
                     process.env.GOOGLE_REDIRECT_URI
                 );
-                
+
                 oauth2Client.setCredentials({
                     refresh_token: req.user.googleRefreshToken,
                     access_token: req.user.googleAccessToken
@@ -332,7 +430,7 @@ const deleteEvent = async (req, res) => {
                     eventId: event.googleEventId,
                     sendUpdates: 'all' // Important: sends participants notification that the meeting is canceled
                 });
-                
+
                 console.log('✅ Successfully deleted event from Google Calendar');
             } catch (googleError) {
                 console.error('❌ Failed to delete from Google Calendar:', googleError.message);
@@ -357,28 +455,28 @@ const rsvpEvent = async (req, res) => {
         // Validate status value
         const validStatuses = ['Accepted', 'Declined', 'Maybe', 'Pending'];
         if (!status || !validStatuses.includes(status)) {
-            return res.status(400).json({ 
-                message: `Invalid status. Must be one of: ${validStatuses.join(', ')}` 
+            return res.status(400).json({
+                message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
             });
         }
 
         // Find the event
         const event = await Event.findById(req.params.id);
-        
+
         if (!event) {
             return res.status(404).json({ message: 'Event not found' });
         }
 
         // Find the current user in the participants array
         const participantIndex = event.participants.findIndex(
-            participant => 
-                participant.email === req.user.email || 
+            participant =>
+                participant.email === req.user.email ||
                 (participant.user && participant.user.toString() === req.user.id)
         );
 
         if (participantIndex === -1) {
-            return res.status(404).json({ 
-                message: 'You are not a participant of this event' 
+            return res.status(404).json({
+                message: 'You are not a participant of this event'
             });
         }
 
