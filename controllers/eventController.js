@@ -14,6 +14,82 @@ const getEvents = async (req, res) => {
             ]
         });
         
+        // Lazy Sync: Update participant RSVP statuses from Google Calendar if connected
+        if (req.user.googleRefreshToken) {
+            try {
+                console.log('🔄 Syncing RSVP statuses from Google Calendar...');
+                
+                const oauth2Client = new OAuth2Client(
+                    process.env.GOOGLE_CLIENT_ID,
+                    process.env.GOOGLE_CLIENT_SECRET,
+                    process.env.GOOGLE_REDIRECT_URI
+                );
+                
+                oauth2Client.setCredentials({
+                    refresh_token: req.user.googleRefreshToken,
+                    access_token: req.user.googleAccessToken
+                });
+
+                const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+                // Process each event that has a Google Calendar ID
+                for (const event of events) {
+                    if (!event.googleEventId) continue;
+
+                    try {
+                        // Fetch the latest event data from Google Calendar
+                        const googleResponse = await calendar.events.get({
+                            calendarId: 'primary',
+                            eventId: event.googleEventId
+                        });
+
+                        const googleAttendees = googleResponse.data.attendees || [];
+                        let hasChanges = false;
+
+                        // Cross-reference Google attendees with local participants
+                        for (let i = 0; i < event.participants.length; i++) {
+                            const participant = event.participants[i];
+                            const googleAttendee = googleAttendees.find(
+                                attendee => attendee.email === participant.email
+                            );
+
+                            if (googleAttendee && googleAttendee.responseStatus) {
+                                // Map Google's responseStatus to our local status
+                                let newStatus = 'Pending';
+                                if (googleAttendee.responseStatus === 'accepted') {
+                                    newStatus = 'Accepted';
+                                } else if (googleAttendee.responseStatus === 'declined') {
+                                    newStatus = 'Declined';
+                                } else if (googleAttendee.responseStatus === 'tentative') {
+                                    newStatus = 'Maybe';
+                                }
+
+                                // Only update if status has changed
+                                if (participant.status !== newStatus) {
+                                    event.participants[i].status = newStatus;
+                                    hasChanges = true;
+                                }
+                            }
+                        }
+
+                        // Save the event only if there were changes
+                        if (hasChanges) {
+                            await event.save();
+                            console.log(`✅ Updated RSVP statuses for event: ${event.title}`);
+                        }
+                    } catch (eventError) {
+                        // Log but don't fail the entire request if one event fails
+                        console.error(`❌ Failed to sync event ${event.googleEventId}:`, eventError.message);
+                    }
+                }
+                
+                console.log('✅ RSVP sync completed');
+            } catch (syncError) {
+                // Log sync errors but don't fail the entire request
+                console.error('❌ Error during Google Calendar sync:', syncError.message);
+            }
+        }
+        
         // Add isInvited property to each event for visual distinction in frontend
         const eventsWithInviteStatus = events.map(event => {
             const eventObj = event.toObject();
@@ -124,52 +200,6 @@ const createEvent = async (req, res) => {
 
 // @desc    Update an event
 // @route   PUT /api/events/:id
-// const updateEvent = async (req, res) => {
-//     try {
-//         const event = await Event.findById(req.params.id);
-
-//         if (!event) {
-//             return res.status(404).json({ message: 'Event not found' });
-//         }
-
-//         // Check if the logged-in user is the creator
-//         if (event.creator.toString() !== req.user.id) {
-//             return res.status(401).json({ message: 'User not authorized' });
-//         }
-
-//         // Parse date fields if they exist in the update
-//         const updateData = { ...req.body };
-        
-//         if (req.body.startDateTime) {
-//             updateData.startDateTime = new Date(req.body.startDateTime);
-//         }
-        
-//         if (req.body.endDateTime) {
-//             updateData.endDateTime = new Date(req.body.endDateTime);
-//         }
-
-//         // Parse availableSlots dates if they exist
-//         if (req.body.availableSlots && Array.isArray(req.body.availableSlots)) {
-//             updateData.availableSlots = req.body.availableSlots.map(slot => ({
-//                 ...slot,
-//                 startDateTime: slot.startDateTime ? new Date(slot.startDateTime) : undefined,
-//                 endDateTime: slot.endDateTime ? new Date(slot.endDateTime) : undefined
-//             }));
-//         }
-
-//         const updatedEvent = await Event.findByIdAndUpdate(
-//             req.params.id,
-//             updateData,
-//             { new: true }
-//         );
-//         res.json(updatedEvent);
-//     } catch (error) {
-//         res.status(400).json({ message: error.message });
-//     }
-// };
-
-// @desc    Update an event
-// @route   PUT /api/events/:id
 const updateEvent = async (req, res) => {
     try {
         const event = await Event.findById(req.params.id);
@@ -197,14 +227,14 @@ const updateEvent = async (req, res) => {
             }));
         }
 
-        // 1. עדכון האירוע במסד הנתונים המקומי
+        // 1. Update the event in the local database
         const updatedEvent = await Event.findByIdAndUpdate(
             req.params.id,
             updateData,
             { new: true }
         );
 
-        // 2. סנכרון העדכון לגוגל קלנדר (אם קיים חיבור ויש מזהה אירוע של גוגל)
+        // 2. Sync the update to Google Calendar (if connection exists and there's a Google event ID)
         if (req.user.googleRefreshToken && updatedEvent.googleEventId && updatedEvent.startDateTime && updatedEvent.endDateTime && updatedEvent.status !== 'Draft') {
             try {
                 console.log('🔄 Attempting to update event in Google Calendar...');
@@ -226,7 +256,7 @@ const updateEvent = async (req, res) => {
                     ? updatedEvent.participants.map(p => ({ email: p.email })) 
                     : [];
 
-                // שימוש ב-patch לעדכון חלקי/מלא של פרטי האירוע
+                // Use patch for partial/full update of event details
                 await calendar.events.patch({
                     calendarId: 'primary',
                     eventId: updatedEvent.googleEventId,
@@ -244,7 +274,7 @@ const updateEvent = async (req, res) => {
                         location: updatedEvent.location || '',
                         attendees: attendees,
                     },
-                    sendUpdates: 'all' // שולח עדכון למייל של כל המשתתפים על שינוי הזמן/מיקום
+                    sendUpdates: 'all' // Sends update email to all participants about time/location changes
                 });
                 
                 console.log('✅ Successfully updated event in Google Calendar');
@@ -279,7 +309,7 @@ const deleteEvent = async (req, res) => {
             return res.status(403).json({ message: 'Unauthorized: Only the creator can delete this event' });
         }
 
-        // 2. מחיקת האירוע מגוגל קלנדר (לפני שמוחקים מהמסד המקומי כדי שיהיה לנו את המזהה)
+        // 2. Delete the event from Google Calendar (before deleting from local database so we have the ID)
         if (req.user.googleRefreshToken && event.googleEventId) {
             try {
                 console.log('🔄 Attempting to delete event from Google Calendar...');
@@ -300,7 +330,7 @@ const deleteEvent = async (req, res) => {
                 await calendar.events.delete({
                     calendarId: 'primary',
                     eventId: event.googleEventId,
-                    sendUpdates: 'all' // חשוב: שולח למשתתפים הודעה שהפגישה בוטלה
+                    sendUpdates: 'all' // Important: sends participants notification that the meeting is canceled
                 });
                 
                 console.log('✅ Successfully deleted event from Google Calendar');
@@ -309,7 +339,7 @@ const deleteEvent = async (req, res) => {
             }
         }
 
-        // 3. מחיקה ממסד הנתונים המקומי
+        // 3. Delete from local database
         await event.deleteOne();
         res.json({ id: req.params.id, message: 'Event removed' });
     } catch (error) {
@@ -318,9 +348,57 @@ const deleteEvent = async (req, res) => {
     }
 };
 
+// @desc    RSVP to an event (update participant status)
+// @route   PUT /api/events/:id/rsvp
+const rsvpEvent = async (req, res) => {
+    try {
+        const { status } = req.body;
+
+        // Validate status value
+        const validStatuses = ['Accepted', 'Declined', 'Maybe', 'Pending'];
+        if (!status || !validStatuses.includes(status)) {
+            return res.status(400).json({ 
+                message: `Invalid status. Must be one of: ${validStatuses.join(', ')}` 
+            });
+        }
+
+        // Find the event
+        const event = await Event.findById(req.params.id);
+        
+        if (!event) {
+            return res.status(404).json({ message: 'Event not found' });
+        }
+
+        // Find the current user in the participants array
+        const participantIndex = event.participants.findIndex(
+            participant => 
+                participant.email === req.user.email || 
+                (participant.user && participant.user.toString() === req.user.id)
+        );
+
+        if (participantIndex === -1) {
+            return res.status(404).json({ 
+                message: 'You are not a participant of this event' 
+            });
+        }
+
+        // Update the participant's status
+        event.participants[participantIndex].status = status;
+
+        // Save the event
+        await event.save();
+
+        res.json(event);
+    } catch (error) {
+        console.error('Error updating RSVP:', error);
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getEvents,
     createEvent,
     updateEvent,
-    deleteEvent
+    deleteEvent,
+    rsvpEvent
 };

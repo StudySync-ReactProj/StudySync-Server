@@ -463,7 +463,14 @@ const listGoogleEvents = async (req, res) => {
                 locationType: event.location ? 'offline' : 'online',
                 status: 'Scheduled',
                 source: 'google', // Mark as Google Calendar event
-                creator: userId
+                creator: userId,
+                participants: (event.attendees || []).map(attendee => ({
+                    email: attendee.email,
+                    name: attendee.displayName || '',
+                    status: attendee.responseStatus === 'accepted' ? 'Accepted' :
+                            attendee.responseStatus === 'declined' ? 'Declined' :
+                            attendee.responseStatus === 'tentative' ? 'Maybe' : 'Pending'
+                }))
             }));
 
             res.json(transformedEvents);

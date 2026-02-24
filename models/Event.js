@@ -42,7 +42,7 @@ const eventSchema = new mongoose.Schema({
     avatar: String,
     status: {
       type: String,
-      enum: ['Pending', 'Accepted', 'Declined'],
+      enum: ['Pending', 'Accepted', 'Declined', 'Maybe'],
       default: 'Pending'
     }
   }],

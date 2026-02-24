@@ -5,7 +5,8 @@ const {
     getEvents,
     createEvent,
     updateEvent,
-    deleteEvent
+    deleteEvent,
+    rsvpEvent
 } = require('../controllers/eventController');
 
 // All routes here are protected - user must be logged in
@@ -16,5 +17,8 @@ router.route('/')
 router.route('/:id')
     .put(protect, updateEvent)
     .delete(protect, deleteEvent);
+
+router.route('/:id/rsvp')
+    .put(protect, rsvpEvent);
 
 module.exports = router;
