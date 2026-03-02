@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const StudySession = require("../models/StudySession");
 const User = require("../models/User");
 const DailyGoal = require("../models/DailyGoal");
@@ -67,10 +68,11 @@ const getWeekly = async (req, res) => {
         const startDate = addDays(today, -6);
         const startKey = getISODateLocal(startDate);
         const endKey = getISODateLocal(today);
+        const userObjectId = new mongoose.Types.ObjectId(req.user.id);
 
         // Aggregate sessions in range by date
         const sessionsAgg = await StudySession.aggregate([
-            { $match: { user: req.user.id, date: { $gte: startKey, $lte: endKey } } },
+            { $match: { user: userObjectId, date: { $gte: startKey, $lte: endKey } } },
             { $group: { _id: "$date", minutes: { $sum: "$minutes" } } }
         ]);
         const sessionsMap = {};
