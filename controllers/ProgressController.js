@@ -40,15 +40,34 @@ const setDailyGoal = async (req, res) => {
 // Save study session (called from Timer)
 const addStudySession = async (req, res) => {
     try {
-        const minutes = Math.max(1, Number(req.body.minutes));
-        if (!Number.isFinite(minutes) || minutes <= 0) {
-            return res.status(400).json({ message: "Invalid minutes" });
+        // Accept minutes OR seconds OR elapsedMs and convert to integer minutes (floor)
+        let minutes;
+
+        if (req.body.minutes !== undefined) {
+            const m = Number(req.body.minutes);
+            if (!Number.isFinite(m)) return res.status(400).json({ message: "Invalid minutes" });
+            minutes = Math.floor(m);
+        } else if (req.body.seconds !== undefined) {
+            const s = Number(req.body.seconds);
+            if (!Number.isFinite(s)) return res.status(400).json({ message: "Invalid seconds" });
+            minutes = Math.floor(s / 60);
+        } else if (req.body.elapsedMs !== undefined) {
+            const ms = Number(req.body.elapsedMs);
+            if (!Number.isFinite(ms)) return res.status(400).json({ message: "Invalid elapsedMs" });
+            minutes = Math.floor(ms / 60000);
+        } else {
+            return res.status(400).json({ message: "Missing time value (minutes, seconds, or elapsedMs)" });
+        }
+
+        // Do not save sessions shorter than 1 minute
+        if (minutes <= 0) {
+            return res.status(200).json({ message: "Session too short" });
         }
 
         const date = getISODateLocal();
 
         await StudySession.create({ user: req.user.id, date, minutes });
-        res.json({ message: "Session saved" });
+        res.json({ dateApplied: date, savedMinutes: minutes });
     } catch (err) {
         console.error("addStudySession error", err);
         res.status(500).json({ message: "Server error" });
