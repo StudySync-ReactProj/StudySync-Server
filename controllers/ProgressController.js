@@ -2,11 +2,18 @@ const StudySession = require("../models/StudySession");
 const User = require("../models/User");
 const DailyGoal = require("../models/DailyGoal");
 
-// Get local date key
+// Get local date key in YYYY-MM-DD (local time)
 const getISODateLocal = (d = new Date()) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-// Set user's daily goal
+// Helper: add days to a Date and return a new Date
+const addDays = (date, days) => {
+    const d = new Date(date);
+    d.setDate(d.getDate() + days);
+    return d;
+};
+
+// Set user's daily goal - always applies to TODAY and overwrites existing
 const setDailyGoal = async (req, res) => {
     try {
         const minutes = Math.max(1, Number(req.body.minutes));
@@ -15,31 +22,14 @@ const setDailyGoal = async (req, res) => {
         }
 
         const todayKey = getISODateLocal();
-        const todayGoal = await DailyGoal.findOne({ user: req.user.id, date: todayKey });
 
-        if (!todayGoal) {
-            // First time setting a goal for today -> apply to today
-            const created = await DailyGoal.findOneAndUpdate(
-                { user: req.user.id, date: todayKey },
-                { $set: { minutes } },
-                { upsert: true, new: true, setDefaultsOnInsert: true }
-            );
-
-            return res.json({ message: "Goal set for today", appliedDate: todayKey, minutes: created.minutes });
-        }
-
-        // If a goal already exists for today, changes apply to tomorrow
-        const tomorrow = new Date();
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        const tomorrowKey = getISODateLocal(tomorrow);
-
-        const createdOrUpdated = await DailyGoal.findOneAndUpdate(
-            { user: req.user.id, date: tomorrowKey },
+        const created = await DailyGoal.findOneAndUpdate(
+            { user: req.user.id, date: todayKey },
             { $set: { minutes } },
             { upsert: true, new: true, setDefaultsOnInsert: true }
         );
 
-        return res.json({ message: "Goal set for tomorrow", appliedDate: tomorrowKey, minutes: createdOrUpdated.minutes });
+        return res.json({ dateApplied: todayKey, goalMinutes: created.minutes });
     } catch (err) {
         console.error("setDailyGoal error", err);
         return res.status(500).json({ message: "Server error" });
@@ -50,6 +40,10 @@ const setDailyGoal = async (req, res) => {
 const addStudySession = async (req, res) => {
     try {
         const minutes = Math.max(1, Number(req.body.minutes));
+        if (!Number.isFinite(minutes) || minutes <= 0) {
+            return res.status(400).json({ message: "Invalid minutes" });
+        }
+
         const date = getISODateLocal();
 
         await StudySession.create({ user: req.user.id, date, minutes });
@@ -70,15 +64,17 @@ const getWeekly = async (req, res) => {
         const labels = ["SUN", "MON", "TUE", "WED", "THR", "FRI", "SAT"];
 
         // Build date range: start = today - 6 days
-        const startDate = new Date(today);
-        startDate.setDate(today.getDate() - 6);
+        const startDate = addDays(today, -6);
         const startKey = getISODateLocal(startDate);
         const endKey = getISODateLocal(today);
 
-        // Fetch sessions in range
-        const sessions = await StudySession.find({ user: req.user.id, date: { $gte: startKey, $lte: endKey } });
+        // Aggregate sessions in range by date
+        const sessionsAgg = await StudySession.aggregate([
+            { $match: { user: req.user.id, date: { $gte: startKey, $lte: endKey } } },
+            { $group: { _id: "$date", minutes: { $sum: "$minutes" } } }
+        ]);
         const sessionsMap = {};
-        sessions.forEach(s => (sessionsMap[s.date] = (sessionsMap[s.date] || 0) + s.minutes));
+        sessionsAgg.forEach(s => (sessionsMap[s._id] = s.minutes));
 
         // Fetch all DailyGoal records up to today (we need earlier ones to fill-forward)
         const goals = await DailyGoal.find({ user: req.user.id, date: { $lte: endKey } }).sort({ date: 1 });
@@ -98,8 +94,7 @@ const getWeekly = async (req, res) => {
 
         // Iterate from startDate -> today
         for (let i = 0; i < 7; i++) {
-            const d = new Date(startDate);
-            d.setDate(startDate.getDate() + i);
+            const d = addDays(startDate, i);
             const key = getISODateLocal(d);
 
             // If there's an explicit goal for this date, update currentGoal
@@ -108,13 +103,14 @@ const getWeekly = async (req, res) => {
             }
 
             weekly.push({
+                date: key,
                 day: labels[d.getDay()],
                 studiedMinutes: sessionsMap[key] || 0,
                 goalMinutes: currentGoal,
             });
         }
 
-        res.json({ weekly, dailyGoalMinutes: defaultGoal });
+        res.json({ weekly });
     } catch (err) {
         console.error("getWeekly error", err);
         res.status(500).json({ message: "Server error" });
