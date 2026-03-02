@@ -6,7 +6,7 @@ const { OAuth2Client } = require('google-auth-library');
 // @route   GET /api/events
 const getEvents = async (req, res) => {
     try {
-        // Finds events where the user is either the creator OR a participant
+        // Find events where user is creator or participant
         const events = await Event.find({
             $or: [
                 { creator: req.user.id },
@@ -72,25 +72,25 @@ const getEvents = async (req, res) => {
                             }
                         }
 
-                        // Save the event only if there were changes
+                        // Save if changed
                         if (hasChanges) {
                             await event.save();
                             console.log(`✅ Updated RSVP statuses for event: ${event.title}`);
                         }
                     } catch (eventError) {
-                        // Log but don't fail the entire request if one event fails
+                        // Log error but don't fail request
                         console.error(`❌ Failed to sync event ${event.googleEventId}:`, eventError.message);
                     }
                 }
 
                 console.log('✅ RSVP sync completed');
             } catch (syncError) {
-                // Log sync errors but don't fail the entire request
+                // Log error but don't fail request
                 console.error('❌ Error during Google Calendar sync:', syncError.message);
             }
         }
 
-        // Add isInvited property to each event for visual distinction in frontend
+        // Add isInvited flag for UI
         const eventsWithInviteStatus = events.map(event => {
             const eventObj = event.toObject();
             // Event is "invited" if the current user is NOT the creator
@@ -127,16 +127,15 @@ const createEvent = async (req, res) => {
             }));
         }
 
-        // step 2: Create event in local database first
-        // first, saving the event locally and oonly after that we will accwss google calendar, this way we ensure that even if google calendar sync fails, the event is still created locally and user can try to sync it later
+        // Save event locally first (ensures data persists even if Google sync fails)
         let event = await Event.create(eventData);
         console.log('✅ Event created locally successfully:', event._id);
 
-        // step 3: checking if user logged in to google calendar & if date has start and finish tine & if event isn't in draft 
+        // Sync to Google Calendar if connected and event has dates
         if (req.user.googleRefreshToken && event.startDateTime && event.endDateTime) {
             try {
                 console.log('🔄 Attempting to sync event to Google Calendar...');
-                // step 4: we create an OAuth2 client with the user's credentials to access their Google Calendar
+                // Create OAuth2 client
                 const oauth2Client = new OAuth2Client(
                     process.env.GOOGLE_CLIENT_ID,
                     process.env.GOOGLE_CLIENT_SECRET,
@@ -148,10 +147,10 @@ const createEvent = async (req, res) => {
                     access_token: req.user.googleAccessToken
                 });
 
-                // step 5: translating our event data to match google calendar's format
+                // Convert to Google Calendar format
                 const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-                // creating attendees list for google calendar - we only need their emails, google will handle the rest
+                // Prepare attendees list
                 const attendees = event.participants
                     ? event.participants.map(p => ({ email: p.email }))
                     : [];
@@ -160,7 +159,6 @@ const createEvent = async (req, res) => {
                     summary: event.title,
                     description: event.description || '',
                     start: {
-                        // Google Calendar API expects dateTime in ISO format and a timeZone
                         dateTime: event.startDateTime.toISOString(),
                         timeZone: 'Asia/Jerusalem',
                     },
@@ -174,19 +172,19 @@ const createEvent = async (req, res) => {
                         useDefault: true,
                     },
                 };
-                // step 6: sending the event to google calendar using the API, if this fails we catch the error but we don't want to fail the whole request because the event is already created locally
+                // Insert event to Google Calendar
                 const response = await calendar.events.insert({
                     calendarId: 'primary',
                     resource: googleEvent,
-                    sendUpdates: 'all' // this will send email notifications to attendees about the new event, you can adjust this based on your needs
+                    sendUpdates: 'all' // Sends email notifications to attendees
                 });
 
-                // step 7: if the event was successfully created in google calendar, we save the google event ID in our local database so we can reference it later for updates or deletions
+                // Save Google event ID for future updates/deletions
                 event.googleEventId = response.data.id;
                 await event.save();
                 console.log('✅ Successfully synced to Google Calendar with ID:', response.data.id);
             } catch (googleError) {
-                // If syncing with Google Calendar fails, we log the error but we don't want to fail the entire event creation process since the event is already created locally
+                // Log error but don't fail event creation (local event already saved)
                 console.error('❌ Failed to sync with Google Calendar:', googleError.message);
             }
         }
@@ -213,7 +211,7 @@ const updateEvent = async (req, res) => {
             return res.status(401).json({ message: 'User not authorized' });
         }
 
-        // 1. First, update the event in our local database
+        // 1. Update event in local database
         const updateData = { ...req.body };
 
         if (req.body.startDateTime) {
@@ -238,8 +236,7 @@ const updateEvent = async (req, res) => {
             { new: true }
         );
 
-        // 2. Sync the update with Google Calendar!
-        // We check that the user has a refresh token, and that the event has a googleEventId (meaning this event exists in Google Calendar)
+        // 2. Sync update to Google Calendar if connected
         if (req.user.googleRefreshToken && event.googleEventId && updatedEvent.startDateTime && updatedEvent.endDateTime) {
             try {
                 console.log('🔄 Attempting to sync update to Google Calendar...');
@@ -260,10 +257,10 @@ const updateEvent = async (req, res) => {
 
                 const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-                // Use patch to update event details in Google Calendar
+                // Update event in Google Calendar
                 await calendar.events.patch({
                     calendarId: 'primary',
-                    eventId: event.googleEventId, // Required: the ID that Google gave to the event when we created it
+                    eventId: event.googleEventId,
                     resource: {
                         summary: updatedEvent.title,
                         description: updatedEvent.description || '',
@@ -277,18 +274,17 @@ const updateEvent = async (req, res) => {
                         },
                         location: updatedEvent.location || '',
                     },
-                    sendUpdates: 'all' // Bonus: automatically sends update email to other participants that the time has changed
+                    sendUpdates: 'all' // Sends update email to participants
                 });
 
                 console.log('✅ Successfully updated event in Google Calendar');
             } catch (googleError) {
-                // If Google returns an error, we only log it and don't fail the server, 
-                // because our local event has already been successfully updated
+                // Log error but don't fail (local event already updated)
                 console.error('❌ Failed to update Google Calendar:', googleError.message);
             }
         }
 
-        // 3. Return the updated event to the client
+        // 3. Return updated event
         res.json(updatedEvent);
     } catch (error) {
         console.error('Error updating event:', error);
@@ -316,7 +312,7 @@ const deleteEvent = async (req, res) => {
             return res.status(403).json({ message: 'Unauthorized: Only the creator can delete this event' });
         }
 
-        // 2. Delete the event from Google Calendar (before deleting from local database so we have the ID)
+        // 2. Delete from Google Calendar (before local DB so we have the ID)
         if (req.user.googleRefreshToken && event.googleEventId) {
             try {
                 console.log('🔄 Attempting to delete event from Google Calendar...');
@@ -337,7 +333,7 @@ const deleteEvent = async (req, res) => {
                 await calendar.events.delete({
                     calendarId: 'primary',
                     eventId: event.googleEventId,
-                    sendUpdates: 'all' // Important: sends participants notification that the meeting is canceled
+                    sendUpdates: 'all' // Sends cancellation notice to participants
                 });
 
                 console.log('✅ Successfully deleted event from Google Calendar');

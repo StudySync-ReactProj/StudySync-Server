@@ -35,9 +35,9 @@ const getAuthUrl = async (req, res) => {
         const url = oauth2Client.generateAuthUrl({
             access_type: 'offline',
             scope: [
-                'https://www.googleapis.com/auth/calendar.readonly', // Read-only access to Calendar (can be changed to full access if needed)
-                'https://www.googleapis.com/auth/calendar.events', // Access to manage calendar events
-                'https://www.googleapis.com/auth/calendar.freebusy' // Access to free/busy information
+                'https://www.googleapis.com/auth/calendar.readonly',
+                'https://www.googleapis.com/auth/calendar.events',
+                'https://www.googleapis.com/auth/calendar.freebusy'
             ],
             prompt: 'consent',
             state: userId // Pass user ID to callback
@@ -84,7 +84,7 @@ const handleCallback = async (req, res) => {
         console.log('🔄 Step 1: Exchanging code for tokens...');
         // 1. Exchange code for tokens
         const oauth2Client = getOAuth2Client();
-        
+
         let tokens;
         try {
             const tokenResponse = await oauth2Client.getToken(code);
@@ -118,7 +118,7 @@ const handleCallback = async (req, res) => {
         }
 
         console.log('🔄 Step 2: Finding user in database...');
-        // 2. Find user by ID from state parameter
+        // Find user by ID
         const user = await User.findById(state);
 
         if (!user) {
@@ -134,15 +134,15 @@ const handleCallback = async (req, res) => {
         console.log('   - Current googleRefreshToken:', user.googleRefreshToken ? 'EXISTS' : 'NULL');
 
         console.log('🔄 Step 3: Updating user document with tokens...');
-        // 3. Update user fields with new tokens
+        // Update user with new tokens
         const oldAccessToken = user.googleAccessToken;
         const oldRefreshToken = user.googleRefreshToken;
         const oldExpiry = user.googleTokenExpiry;
 
         user.googleAccessToken = tokens.access_token;
         user.googleTokenExpiry = tokens.expiry_date;
-        
-        // Handle refresh token (crucial for long-term access)
+
+        // Handle refresh token
         if (tokens.refresh_token) {
             user.googleRefreshToken = tokens.refresh_token;
             console.log('✅ NEW refresh token received and set');
@@ -174,7 +174,7 @@ const handleCallback = async (req, res) => {
             console.log('   - googleRefreshToken saved:', !!savedUser.googleRefreshToken ? 'YES ✅' : 'NO ❌');
             console.log('   - googleTokenExpiry saved:', savedUser.googleTokenExpiry || 'NULL');
 
-            // Verify the save by querying the database again
+            // Verify save
             console.log('🔄 Step 5: Verifying database save...');
             const verifyUser = await User.findById(state);
             console.log('✅ Verification query result:');
@@ -198,7 +198,7 @@ const handleCallback = async (req, res) => {
         console.log('✅ ALL STEPS COMPLETED SUCCESSFULLY');
         console.log('🎉 Redirecting to frontend with success flag...');
         res.redirect(`${process.env.CLIENT_URL}/CalendarSync?googleConnected=true`);
-        
+
     } catch (error) {
         console.error('❌ UNEXPECTED ERROR IN CALLBACK:');
         console.error('   Error name:', error.name);
@@ -212,23 +212,43 @@ const handleCallback = async (req, res) => {
 // @route   POST /api/google-calendar/freebusy
 const getFreeBusy = async (req, res) => {
     try {
-        // SECURITY: Always use req.user.id from auth middleware
-        // Never trust userId from request body to prevent users accessing other calendars
-        const { emails, timeMin, timeMax } = req.body;
+        // SECURITY: Use req.user.id from auth middleware only
+        const { emails, timeMin, timeMax, excludeEventId } = req.body;
         const currentUserId = req.user.id;
 
         console.log('🔒 FreeBusy request for user:', currentUserId);
         console.log('📧 Checking availability for emails:', emails);
         console.log('⏰ Time range:', timeMin, 'to', timeMax);
+        if (excludeEventId) {
+            console.log('🚫 Excluding event from availability check:', excludeEventId);
+        }
 
-        // Initialize result object - will store busy times for each calendar
+        // Fetch the excluded event if provided (to get its time range for filtering)
+        let excludedEvent = null;
+        if (excludeEventId) {
+            try {
+                excludedEvent = await Event.findById(excludeEventId);
+                if (excludedEvent) {
+                    console.log('📌 Excluded event details:', {
+                        title: excludedEvent.title,
+                        start: excludedEvent.startDateTime,
+                        end: excludedEvent.endDateTime,
+                        googleEventId: excludedEvent.googleEventId
+                    });
+                }
+            } catch (error) {
+                console.error('⚠️ Could not fetch excluded event:', error.message);
+            }
+        }
+
+        // Store busy times for each calendar
         const calendars = {};
 
-        // Helper function to get local events (from MongoDB) for a user
+        // Get local events busy times
         const getLocalEventsBusyTimes = async (userEmail, userId) => {
             try {
-                // Find all events where user is creator or participant within the time range
-                const localEvents = await Event.find({
+                // Build query conditions
+                const queryConditions = {
                     $and: [
                         {
                             $or: [
@@ -244,18 +264,27 @@ const getFreeBusy = async (req, res) => {
                             $or: [
                                 { startDateTime: { $gte: new Date(timeMin), $lte: new Date(timeMax) } },
                                 { endDateTime: { $gte: new Date(timeMin), $lte: new Date(timeMax) } },
-                                { 
+                                {
                                     startDateTime: { $lte: new Date(timeMin) },
                                     endDateTime: { $gte: new Date(timeMax) }
                                 }
                             ]
                         }
                     ]
-                });
+                };
 
-                console.log(`📅 Found ${localEvents.length} local events for ${userEmail}`);
+                // Exclude the specified event if provided
+                if (excludeEventId) {
+                    queryConditions.$and.push({ _id: { $ne: excludeEventId } });
+                }
 
-                // Convert to busy time format (matching Google Calendar API format)
+                // Find events within time range
+                const localEvents = await Event.find(queryConditions);
+
+                console.log(`📅 Found ${localEvents.length} local events for ${userEmail}` + 
+                    (excludeEventId ? ` (excluded event ID: ${excludeEventId})` : ''));
+
+                // Convert to busy time format
                 return localEvents.map(event => ({
                     start: event.startDateTime.toISOString(),
                     end: event.endDateTime.toISOString()
@@ -266,7 +295,7 @@ const getFreeBusy = async (req, res) => {
             }
         };
 
-        // Helper function to get Google Calendar busy times for a user
+        // Get Google Calendar busy times
         const getGoogleBusyTimes = async (user, emailToCheck) => {
             try {
                 if (!user.googleRefreshToken) {
@@ -280,7 +309,7 @@ const getFreeBusy = async (req, res) => {
                     access_token: user.googleAccessToken
                 });
 
-                // Listen for token refresh
+                // Auto-save refreshed token
                 oauth2Client.on('tokens', async (tokens) => {
                     if (tokens.access_token) {
                         console.log(`🔄 Access token refreshed for ${user.email}`);
@@ -302,7 +331,31 @@ const getFreeBusy = async (req, res) => {
                     }
                 });
 
-                const busyTimes = freeBusyResponse.data.calendars?.[emailToCheck]?.busy || [];
+                let busyTimes = freeBusyResponse.data.calendars?.[emailToCheck]?.busy || [];
+                
+                // Filter out the excluded event's time slot if it exists
+                if (excludedEvent && excludedEvent.startDateTime && excludedEvent.endDateTime) {
+                    // Convert excluded event times to timestamps for robust comparison
+                    const excludedStartTimestamp = new Date(excludedEvent.startDateTime).getTime();
+                    const excludedEndTimestamp = new Date(excludedEvent.endDateTime).getTime();
+                    
+                    const initialCount = busyTimes.length;
+                    busyTimes = busyTimes.filter(slot => {
+                        // Convert Google busy slot times to timestamps
+                        const slotStartTimestamp = new Date(slot.start).getTime();
+                        const slotEndTimestamp = new Date(slot.end).getTime();
+                        
+                        // Filter out slots that exactly match the excluded event's time range
+                        const isExcludedSlot = (slotStartTimestamp === excludedStartTimestamp && 
+                                                slotEndTimestamp === excludedEndTimestamp);
+                        return !isExcludedSlot;
+                    });
+                    
+                    if (busyTimes.length < initialCount) {
+                        console.log(`🚫 Filtered out excluded event from Google Calendar busy times for ${emailToCheck}`);
+                    }
+                }
+                
                 console.log(`📅 Found ${busyTimes.length} Google Calendar busy slots for ${emailToCheck}`);
                 return busyTimes;
             } catch (error) {
@@ -321,7 +374,7 @@ const getFreeBusy = async (req, res) => {
 
         // Get current user's local events
         const currentUserLocalBusy = await getLocalEventsBusyTimes(currentUser.email, currentUserId);
-        
+
         // Get current user's Google Calendar busy times
         const currentUserGoogleBusy = await getGoogleBusyTimes(currentUser, currentUser.email);
 
@@ -334,7 +387,7 @@ const getFreeBusy = async (req, res) => {
         for (const email of emails) {
             console.log(`👥 Processing participant: ${email}`);
 
-            // Skip if it's the current user (already processed)
+            // Skip current user
             if (email === currentUser.email) {
                 console.log('  ↳ Skipping - this is the current user');
                 continue;
@@ -345,7 +398,7 @@ const getFreeBusy = async (req, res) => {
 
             if (!participant) {
                 console.log(`  ↳ User not found in database - skipping`);
-                // User not in system, can't check their calendar
+                // User not in system
                 calendars[email] = { busy: [] };
                 continue;
             }
@@ -367,7 +420,7 @@ const getFreeBusy = async (req, res) => {
         }
 
         console.log('✅ FreeBusy check complete');
-        console.log('📊 Summary:', Object.keys(calendars).map(email => 
+        console.log('📊 Summary:', Object.keys(calendars).map(email =>
             `${email}: ${calendars[email].busy.length} busy slots`
         ).join(', '));
 
@@ -379,6 +432,119 @@ const getFreeBusy = async (req, res) => {
 };
 // @desc    List Google Calendar events for the next 7 days
 // @route   GET /api/google-calendar/events
+// const listGoogleEvents = async (req, res) => {
+//     try {
+//         console.log('--- !!! NOAM TEST !!! ---');
+//         console.log('User ID from request:', req.user?.id);
+
+//         const userId = req.user.id;
+
+//         // Get user from database to retrieve stored tokens
+//         const user = await User.findById(userId);
+
+//         console.log('User found in database?:', !!user);
+//         if (user) {
+//             console.log('Has googleAccessToken?:', !!user.googleAccessToken);
+//             console.log('Has googleRefreshToken?:', !!user.googleRefreshToken);
+//         }
+//         console.log('------------------------------------');
+
+//         if (!user) {
+//             return res.status(404).json({
+//                 message: 'User not found in database.'
+//             });
+//         }
+
+//         // If user hasn't connected Google Calendar, return empty array instead of error
+//         // This allows the app to work with local events only
+//         if (!user.googleRefreshToken) {
+//             console.log('ℹ️  User has not connected Google Calendar - returning empty array');
+//             return res.json([]);
+//         }
+
+//         if (!user.googleAccessToken) {
+//             console.log('⚠️  Access token missing but refresh token exists - will attempt to refresh');
+//         }
+
+//         const oauth2Client = getOAuth2Client();
+//         oauth2Client.setCredentials({
+//             access_token: user.googleAccessToken,
+//             refresh_token: user.googleRefreshToken
+//         });
+
+//         // Listen for token refresh and save new access token
+//         oauth2Client.on('tokens', async (tokens) => {
+//             if (tokens.access_token) {
+//                 console.log('🔄 Access token refreshed in listGoogleEvents');
+//                 user.googleAccessToken = tokens.access_token;
+//                 if (tokens.expiry_date) {
+//                     user.googleTokenExpiry = tokens.expiry_date;
+//                 }
+//                 await user.save();
+//                 console.log('✅ Updated access token saved to database');
+//             }
+//         });
+
+//         // Wrap Google API call in try-catch to handle token issues gracefully
+//         try {
+//             const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+//             // Calculate time range (next 7 days)
+//             const now = new Date();
+//             const sevenDaysFromNow = new Date();
+//             sevenDaysFromNow.setDate(now.getDate() + 7);
+
+//             const response = await calendar.events.list({
+//                 calendarId: 'primary',
+//                 timeMin: now.toISOString(),
+//                 timeMax: sevenDaysFromNow.toISOString(),
+//                 maxResults: 100,
+//                 singleEvents: true,
+//                 orderBy: 'startTime'
+//             });
+
+//             const events = response.data.items || [];
+
+//             // Transform Google Calendar events to match your app's event format
+//             const transformedEvents = events.map(event => ({
+//                 id: event.id,
+//                 title: event.summary || 'Untitled Event',
+//                 description: event.description || '',
+//                 start: event.start.dateTime || event.start.date,
+//                 end: event.end.dateTime || event.end.date,
+//                 location: event.location || '',
+//                 locationType: event.location ? 'offline' : 'online',
+//                 status: 'Scheduled',
+//                 source: 'google', // Mark as Google Calendar event
+//                 creator: userId,
+//                 participants: (event.attendees || []).map(attendee => ({
+//                     email: attendee.email,
+//                     name: attendee.displayName || '',
+//                     status: attendee.responseStatus === 'accepted' ? 'Accepted' :
+//                             attendee.responseStatus === 'declined' ? 'Declined' :
+//                             attendee.responseStatus === 'tentative' ? 'Maybe' : 'Pending'
+//                 }))
+//             }));
+
+//             res.json(transformedEvents);
+//         } catch (googleError) {
+//             // If Google API fails (expired token, API error, etc.), return empty array
+//             // This allows the app to continue working with local events
+//             console.error('❌ Google Calendar API error:', googleError.message);
+//             console.log('ℹ️  Returning empty array - app will continue with local events only');
+
+//             // Return empty array instead of throwing error
+//             // Frontend will handle this gracefully
+//             return res.json([]);
+//         }
+//     } catch (error) {
+//         // Catch any other unexpected errors
+//         console.error('❌ Unexpected error in listGoogleEvents:', error);
+//         // Still return empty array to prevent frontend crashes
+//         res.json([]);
+//     }
+// };
+
 const listGoogleEvents = async (req, res) => {
     try {
         console.log('--- !!! NOAM TEST !!! ---');
@@ -386,7 +552,7 @@ const listGoogleEvents = async (req, res) => {
 
         const userId = req.user.id;
 
-        // Get user from database to retrieve stored tokens
+        // Get user from database
         const user = await User.findById(userId);
 
         console.log('User found in database?:', !!user);
@@ -402,8 +568,7 @@ const listGoogleEvents = async (req, res) => {
             });
         }
 
-        // If user hasn't connected Google Calendar, return empty array instead of error
-        // This allows the app to work with local events only
+        // No Google Calendar connected - return empty array
         if (!user.googleRefreshToken) {
             console.log('ℹ️  User has not connected Google Calendar - returning empty array');
             return res.json([]);
@@ -419,7 +584,7 @@ const listGoogleEvents = async (req, res) => {
             refresh_token: user.googleRefreshToken
         });
 
-        // Listen for token refresh and save new access token
+        // Auto-save refreshed token
         oauth2Client.on('tokens', async (tokens) => {
             if (tokens.access_token) {
                 console.log('🔄 Access token refreshed in listGoogleEvents');
@@ -432,7 +597,7 @@ const listGoogleEvents = async (req, res) => {
             }
         });
 
-        // Wrap Google API call in try-catch to handle token issues gracefully
+        // Fetch Google Calendar events
         try {
             const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
@@ -452,42 +617,65 @@ const listGoogleEvents = async (req, res) => {
 
             const events = response.data.items || [];
 
-            // Transform Google Calendar events to match your app's event format
-            const transformedEvents = events.map(event => ({
-                id: event.id,
-                title: event.summary || 'Untitled Event',
-                description: event.description || '',
-                start: event.start.dateTime || event.start.date,
-                end: event.end.dateTime || event.end.date,
-                location: event.location || '',
-                locationType: event.location ? 'offline' : 'online',
-                status: 'Scheduled',
-                source: 'google', // Mark as Google Calendar event
-                creator: userId,
-                participants: (event.attendees || []).map(attendee => ({
-                    email: attendee.email,
-                    name: attendee.displayName || '',
-                    status: attendee.responseStatus === 'accepted' ? 'Accepted' :
-                            attendee.responseStatus === 'declined' ? 'Declined' :
-                            attendee.responseStatus === 'tentative' ? 'Maybe' : 'Pending'
-                }))
-            }));
+            // Transform Google Calendar events
+            const transformedEvents = events.map(event => {
+                let eventStart = event.start.dateTime;
+                let eventEnd = event.end.dateTime;
+                let isAllDay = false;
 
-            res.json(transformedEvents);
+                // Handle all-day events
+                if (!eventStart) {
+                    isAllDay = true;
+                    eventStart = `${event.start.date}T00:00:00`;
+                    eventEnd = `${event.start.date}T01:00:00`;
+                }
+
+                return {
+                    id: event.id,
+                    title: event.summary || 'Untitled Event',
+                    description: event.description || '',
+                    start: eventStart,
+                    end: eventEnd,
+                    location: event.location || '',
+                    locationType: event.location ? 'offline' : 'online',
+                    status: 'Scheduled',
+                    source: 'google',
+                    creator: userId,
+                    isAllDay: isAllDay,
+                    participants: (event.attendees || []).map(attendee => ({
+                        email: attendee.email,
+                        name: attendee.displayName || '',
+                        status: attendee.responseStatus === 'accepted' ? 'Accepted' :
+                            attendee.responseStatus === 'declined' ? 'Declined' :
+                                attendee.responseStatus === 'tentative' ? 'Maybe' : 'Pending'
+                    }))
+                };
+            });
+
+            // Filter out duplicates (events already in local DB)
+            const localEventsWithGoogleId = await Event.find({
+                creator: userId,
+                googleEventId: { $exists: true, $ne: null }
+            }).select('googleEventId');
+
+            const existingGoogleIds = localEventsWithGoogleId.map(e => e.googleEventId);
+
+            // Return only unique Google events
+            const uniqueGoogleEvents = transformedEvents.filter(
+                googleEvent => !existingGoogleIds.includes(googleEvent.id)
+            );
+
+            res.json(uniqueGoogleEvents);
+
         } catch (googleError) {
-            // If Google API fails (expired token, API error, etc.), return empty array
-            // This allows the app to continue working with local events
+            // Google API failed - return empty array for graceful degradation
             console.error('❌ Google Calendar API error:', googleError.message);
             console.log('ℹ️  Returning empty array - app will continue with local events only');
-            
-            // Return empty array instead of throwing error
-            // Frontend will handle this gracefully
             return res.json([]);
         }
     } catch (error) {
-        // Catch any other unexpected errors
+        // Return empty array to prevent frontend crashes
         console.error('❌ Unexpected error in listGoogleEvents:', error);
-        // Still return empty array to prevent frontend crashes
         res.json([]);
     }
 };
