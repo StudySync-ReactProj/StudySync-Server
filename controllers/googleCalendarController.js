@@ -269,7 +269,9 @@ const getFreeBusy = async (req, res) => {
                                     endDateTime: { $gte: new Date(timeMax) }
                                 }
                             ]
-                        }
+                        },
+                        // Exclude all-day events from blocking time slots
+                        { isAllDay: { $ne: true } }
                     ]
                 };
 
@@ -619,15 +621,20 @@ const listGoogleEvents = async (req, res) => {
 
             // Transform Google Calendar events
             const transformedEvents = events.map(event => {
-                let eventStart = event.start.dateTime;
-                let eventEnd = event.end.dateTime;
-                let isAllDay = false;
-
-                // Handle all-day events
-                if (!eventStart) {
-                    isAllDay = true;
+                // Check if this is an all-day event (Google uses 'date' instead of 'dateTime')
+                const isAllDay = !!event.start.date;
+                
+                let eventStart, eventEnd;
+                
+                if (isAllDay) {
+                    // For all-day events, use the date field and set to midnight
                     eventStart = `${event.start.date}T00:00:00`;
-                    eventEnd = `${event.start.date}T01:00:00`;
+                    // Google's end date for all-day events is exclusive, so we keep it as-is
+                    eventEnd = `${event.end.date}T00:00:00`;
+                } else {
+                    // For regular events, use dateTime
+                    eventStart = event.start.dateTime;
+                    eventEnd = event.end.dateTime;
                 }
 
                 return {
