@@ -19,13 +19,19 @@ const taskSchema = new mongoose.Schema(
 
     dueDate: { type: Date },
 
+    // --- scheduling & estimation fields ---
+    estimatedMinutes: { type: Number, default: 0 },
+    scheduledStart: { type: Date },
+    scheduledEnd: { type: Date },
+    creditedEstimatedTime: { type: Boolean, default: false },
+
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
     },
   },
-  { timestamps: true } 
+  { timestamps: true }
 );
 
 module.exports = mongoose.models.Task || mongoose.model("Task", taskSchema);
