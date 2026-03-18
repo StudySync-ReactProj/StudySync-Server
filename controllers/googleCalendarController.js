@@ -2,6 +2,7 @@ const { google } = require('googleapis');
 const { OAuth2Client } = require('google-auth-library');
 const User = require('../models/User');
 const Event = require('../models/Event');
+const Task = require('../models/Task');
 
 // Initialize OAuth2 client
 const getOAuth2Client = () => {
@@ -286,11 +287,34 @@ const getFreeBusy = async (req, res) => {
                 console.log(`📅 Found ${localEvents.length} local events for ${userEmail}` + 
                     (excludeEventId ? ` (excluded event ID: ${excludeEventId})` : ''));
 
-                // Convert to busy time format
-                return localEvents.map(event => ({
+                const eventBusySlots = localEvents.map(event => ({
                     start: event.startDateTime.toISOString(),
                     end: event.endDateTime.toISOString()
                 }));
+
+                // Find scheduled tasks within time range
+                const scheduledTasks = await Task.find({
+                    user: userId,
+                    scheduledStart: { $exists: true, $ne: null },
+                    scheduledEnd: { $exists: true, $ne: null },
+                    $or: [
+                        { scheduledStart: { $gte: new Date(timeMin), $lte: new Date(timeMax) } },
+                        { scheduledEnd: { $gte: new Date(timeMin), $lte: new Date(timeMax) } },
+                        {
+                            scheduledStart: { $lte: new Date(timeMin) },
+                            scheduledEnd: { $gte: new Date(timeMax) }
+                        }
+                    ]
+                });
+
+                console.log(`📝 Found ${scheduledTasks.length} scheduled tasks for ${userEmail}`);
+
+                const taskBusySlots = scheduledTasks.map(task => ({
+                    start: task.scheduledStart.toISOString(),
+                    end: task.scheduledEnd.toISOString()
+                }));
+
+                return [...eventBusySlots, ...taskBusySlots];
             } catch (error) {
                 console.error(`❌ Error fetching local events for ${userEmail}:`, error.message);
                 return [];
