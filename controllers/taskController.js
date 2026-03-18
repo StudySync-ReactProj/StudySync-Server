@@ -1,6 +1,7 @@
 const Task = require('../models/Task');
 const StudySession = require('../models/StudySession');
 const { isTimeSlotAvailable } = require('../helpers/calendarConflict');
+const { getAvailableSlots } = require('../helpers/availabilitySlots');
 
 // Helper to get local date key YYYY-MM-DD
 const getISODateLocal = (d = new Date()) =>
@@ -158,4 +159,46 @@ const deleteTask = async (req, res) => {
   }
 };
 
-module.exports = { getTasks, createTask, updateTask, deleteTask };
+// @desc    Get available time slots for a specific date and duration
+// @route   GET /api/tasks/available-slots?date=YYYY-MM-DD&duration=MINUTES
+const getAvailableTaskSlots = async (req, res) => {
+  try {
+    const { date, duration } = req.query;
+
+    // Validate date parameter
+    if (!date) {
+      return res.status(400).json({ message: 'Date parameter (YYYY-MM-DD) is required' });
+    }
+
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(date)) {
+      return res.status(400).json({ message: 'Date must be in YYYY-MM-DD format' });
+    }
+
+    // Validate date is a valid calendar date
+    const [year, month, day] = date.split('-').map(Number);
+    const dateObj = new Date(year, month - 1, day);
+    if (dateObj.getFullYear() !== year || dateObj.getMonth() !== month - 1 || dateObj.getDate() !== day) {
+      return res.status(400).json({ message: 'Date is not a valid calendar date' });
+    }
+
+    // Validate duration parameter
+    if (!duration) {
+      return res.status(400).json({ message: 'Duration parameter (minutes) is required' });
+    }
+
+    const durationMinutes = Number(duration);
+    if (isNaN(durationMinutes) || durationMinutes <= 0) {
+      return res.status(400).json({ message: 'Duration must be a positive number representing minutes' });
+    }
+
+    // Get available slots for the user
+    const availableSlots = await getAvailableSlots(req.user.id, date, durationMinutes);
+
+    res.json(availableSlots);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+module.exports = { getTasks, createTask, updateTask, deleteTask, getAvailableTaskSlots };
