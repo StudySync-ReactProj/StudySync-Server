@@ -9,6 +9,14 @@ const generateToken = (id) => {
     });
 };
 
+const buildSafeAuthUserPayload = (user) => ({
+    _id: user.id,
+    username: user.username,
+    email: user.email,
+    hasGoogleCalendar: !!user.googleRefreshToken,
+    token: generateToken(user._id),
+});
+
 // @desc    Register new user
 // @route   POST /api/users/register
 const registerUser = async (req, res) => {
@@ -31,12 +39,7 @@ const registerUser = async (req, res) => {
         });
 
         if (user) {
-            res.status(201).json({
-                _id: user.id,
-                username: user.username,
-                email: user.email,
-                token: generateToken(user._id),
-            });
+            res.status(201).json(buildSafeAuthUserPayload(user));
         } else {
             res.status(400).json({ message: 'Invalid user data' });
         }
@@ -54,12 +57,7 @@ const loginUser = async (req, res) => {
         const user = await User.findOne({ email });
 
         if (user && (await bcrypt.compare(password, user.password))) {
-            res.json({
-                _id: user.id,
-                username: user.username,
-                email: user.email,
-                token: generateToken(user._id),
-            });
+            res.json(buildSafeAuthUserPayload(user));
         } else {
             res.status(400).json({ message: 'Invalid credentials' });
         }
