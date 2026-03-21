@@ -13,11 +13,15 @@ const protect = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     //saves te user
-    req.user = await User.findById(decoded.id).select("-password");
+    const userDoc = await User.findById(decoded.id).select("-password");
 
-    if (!req.user) {
+    if (!userDoc) {
       return res.status(401).json({ message: "Not authorized, user not found" });
     }
+
+    req.user = userDoc.toObject();
+    req.user._id = userDoc._id;
+    req.user.id = userDoc._id.toString();
 
     next();
   } catch (err) {

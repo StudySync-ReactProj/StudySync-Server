@@ -2,14 +2,27 @@ const Event = require('../models/Event');
 const { google } = require('googleapis');
 const { OAuth2Client } = require('google-auth-library');
 
+const resolveUserId = (user) => {
+    if (!user) return null;
+    if (user.id) return user.id.toString();
+    if (user._id) return user._id.toString();
+    return null;
+};
+
+const resolveRequestId = (req) => {
+    return req.params?.id || req.params?._id || req.body?.id || req.body?._id || req.query?.id || req.query?._id;
+};
+
 // @desc    Get all events for the logged-in user
 // @route   GET /api/events
 const getEvents = async (req, res) => {
     try {
+        const userId = resolveUserId(req.user);
+
         // Find events where user is creator or participant
         const events = await Event.find({
             $or: [
-                { creator: req.user.id },
+                { creator: userId },
                 { 'participants.email': req.user.email }
             ]
         });
@@ -94,7 +107,7 @@ const getEvents = async (req, res) => {
         const eventsWithInviteStatus = events.map(event => {
             const eventObj = event.toObject();
             // Event is "invited" if the current user is NOT the creator
-            eventObj.isInvited = event.creator.toString() !== req.user.id;
+            eventObj.isInvited = event.creator.toString() !== userId;
             return eventObj;
         });
 
@@ -108,12 +121,13 @@ const getEvents = async (req, res) => {
 // @route   POST /api/events
 const createEvent = async (req, res) => {
     try {
+        const userId = resolveUserId(req.user);
         console.log('📥 Creating event with body:', JSON.stringify(req.body, null, 2));
 
         // step 1: Prepare event data for local database
         const eventData = {
             ...req.body,
-            creator: req.user.id,
+            creator: userId,
         };
 
         if (req.body.startDateTime) eventData.startDateTime = new Date(req.body.startDateTime);
@@ -200,14 +214,16 @@ const createEvent = async (req, res) => {
 // @route   PUT /api/events/:id
 const updateEvent = async (req, res) => {
     try {
-        const event = await Event.findById(req.params.id);
+        const userId = resolveUserId(req.user);
+        const eventId = resolveRequestId(req);
+        const event = await Event.findById(eventId);
 
         if (!event) {
             return res.status(404).json({ message: 'Event not found' });
         }
 
         // Check that only the creator can update
-        if (event.creator.toString() !== req.user.id) {
+        if (event.creator.toString() !== userId) {
             return res.status(401).json({ message: 'User not authorized' });
         }
 
@@ -231,7 +247,7 @@ const updateEvent = async (req, res) => {
         }
 
         const updatedEvent = await Event.findByIdAndUpdate(
-            req.params.id,
+            eventId,
             updateData,
             { new: true }
         );
@@ -300,15 +316,17 @@ const updateEvent = async (req, res) => {
 // @route   DELETE /api/events/:id
 const deleteEvent = async (req, res) => {
     try {
+        const userId = resolveUserId(req.user);
+        const eventId = resolveRequestId(req);
         // 1. Fetch the event by its ID
-        const event = await Event.findById(req.params.id);
+        const event = await Event.findById(eventId);
 
         if (!event) {
             return res.status(404).json({ message: 'Event not found' });
         }
 
         // Validate ownership
-        if (event.creator.toString() !== req.user.id) {
+        if (event.creator.toString() !== userId) {
             return res.status(403).json({ message: 'Unauthorized: Only the creator can delete this event' });
         }
 
@@ -344,7 +362,7 @@ const deleteEvent = async (req, res) => {
 
         // 3. Delete from local database
         await event.deleteOne();
-        res.json({ id: req.params.id, message: 'Event removed' });
+        res.json({ id: eventId, message: 'Event removed' });
     } catch (error) {
         console.error('Error deleting event:', error);
         res.status(500).json({ message: error.message });
@@ -355,6 +373,8 @@ const deleteEvent = async (req, res) => {
 // @route   PUT /api/events/:id/rsvp
 const rsvpEvent = async (req, res) => {
     try {
+        const eventId = resolveRequestId(req);
+        const userId = resolveUserId(req.user);
         const { status } = req.body;
 
         // Validate status value
@@ -366,7 +386,9 @@ const rsvpEvent = async (req, res) => {
         }
 
         // Find the event
-        const event = await Event.findById(req.params.id);
+        const event = await Event.findById(eventId);
+        const eventDate = event ? (event.startDateTime || event.date || null) : null;
+        console.log('RSVP Attempt for event:', eventId, 'Date:', eventDate);
 
         if (!event) {
             return res.status(404).json({ message: 'Event not found' });
@@ -376,7 +398,7 @@ const rsvpEvent = async (req, res) => {
         const participantIndex = event.participants.findIndex(
             participant =>
                 participant.email === req.user.email ||
-                (participant.user && participant.user.toString() === req.user.id)
+                (participant.user && participant.user.toString() === userId)
         );
 
         if (participantIndex === -1) {

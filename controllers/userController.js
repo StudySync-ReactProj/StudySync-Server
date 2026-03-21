@@ -2,6 +2,17 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 
+const resolveUserId = (user) => {
+    if (!user) return null;
+    if (user.id) return user.id.toString();
+    if (user._id) return user._id.toString();
+    return null;
+};
+
+const resolveRequestId = (req) => {
+    return req.params?.id || req.params?._id || req.body?.id || req.body?._id || req.query?.id || req.query?._id;
+};
+
 // Helper function to generate JWT
 const generateToken = (id) => {
     return jwt.sign({ id }, process.env.JWT_SECRET, {
@@ -11,11 +22,12 @@ const generateToken = (id) => {
 
 const buildSafeAuthUserPayload = (user) => {
     // Both user._id (MongoDB ID) and user.id (from toJSON transform) should work
-    const userId = user.id || user._id;
+    const userId = resolveUserId(user);
     console.log('Backend User ID:', userId, '(type:', typeof userId + ')');
     
     return {
         id: userId,
+        _id: userId,
         username: user.username,
         email: user.email,
         hasGoogleCalendar: !!user.googleRefreshToken,
@@ -79,7 +91,8 @@ const loginUser = async (req, res) => {
 const addContact = async (req, res) => {
     try {
         const { name, email, avatar } = req.body;
-        const user = await User.findById(req.user.id);
+        const authenticatedUserId = resolveUserId(req.user) || resolveRequestId(req);
+        const user = await User.findById(authenticatedUserId);
 
         if (!user) {
             return res.status(404).json({ message: 'User not found' });
@@ -104,7 +117,8 @@ const addContact = async (req, res) => {
 // @route   GET /api/users/contacts
 const getContacts = async (req, res) => {
     try {
-        const user = await User.findById(req.user.id);
+        const authenticatedUserId = resolveUserId(req.user) || resolveRequestId(req);
+        const user = await User.findById(authenticatedUserId);
         res.json(user.contacts);
     } catch (error) {
         res.status(500).json({ message: error.message });
