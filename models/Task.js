@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { applyIdJsonTransform } = require('./schemaJson');
 
 const taskSchema = new mongoose.Schema(
   {
@@ -34,5 +35,7 @@ const taskSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+applyIdJsonTransform(taskSchema);
 
 module.exports = mongoose.models.Task || mongoose.model("Task", taskSchema);

@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { applyIdJsonTransform } = require('./schemaJson');
 
 // Stores study time per user per day
 const studySessionSchema = new mongoose.Schema({
@@ -6,5 +7,7 @@ const studySessionSchema = new mongoose.Schema({
     date: { type: String, required: true }, // "YYYY-MM-DD"
     minutes: { type: Number, required: true },
 }, { timestamps: true });
+
+applyIdJsonTransform(studySessionSchema);
 
 module.exports = mongoose.model("StudySession", studySessionSchema);

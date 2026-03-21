@@ -1,6 +1,7 @@
 // fields: password, email, username, createdAt
 
 const mongoose = require('mongoose');
+const { applyIdJsonTransform } = require('./schemaJson');
 
 const schema = new mongoose.Schema({
     username: {
@@ -33,6 +34,8 @@ const schema = new mongoose.Schema({
     googleRefreshToken: String,
     googleTokenExpiry: Number,
 }, { timestamps: true });
+
+applyIdJsonTransform(schema);
 
 const User = mongoose.model('User', schema);
 module.exports = User;

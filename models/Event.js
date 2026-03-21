@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { applyIdJsonTransform } = require('./schemaJson');
 
 const eventSchema = new mongoose.Schema({
   title: {
@@ -73,6 +74,8 @@ const eventSchema = new mongoose.Schema({
     required: true
   }
 }, { timestamps: true });
+
+applyIdJsonTransform(eventSchema);
 
 module.exports = mongoose.models.Event || mongoose.model("Event", eventSchema);
 
