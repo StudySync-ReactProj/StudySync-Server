@@ -34,12 +34,23 @@ console.log('✅ All required environment variables are present');
 const app = express();
 
 // Middleware
-const allowedOrigins = [
+const envOrigins = [
     process.env.CLIENT_URL,
+    ...(process.env.ADDITIONAL_CLIENT_URLS || '')
+        .split(',')
+        .map(origin => origin.trim())
+        .filter(Boolean)
+];
+
+const devOrigins = [
     'http://localhost:5173',
     'http://localhost:5174',
-    'http://localhost:3001',
-    'https://studysyncprojm.netlify.app'
+    'http://localhost:3001'
+];
+
+const allowedOrigins = [
+    ...envOrigins,
+    ...(process.env.NODE_ENV === 'production' ? [] : devOrigins)
 ];
 
 app.use(cors({
@@ -72,12 +83,6 @@ app.get('/', (req, res) => {
     res.json('StudySync Server is running');
 });
 
-// Placeholders for routes
-app.get('/check-users', async (req, res) => {
-    const User = require('./models/User');
-    const allUsers = await User.find({});
-    res.json(allUsers);
-});
 app.use('/api/tasks', taskRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/events', eventRoutes);
