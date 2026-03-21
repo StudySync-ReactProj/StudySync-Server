@@ -160,10 +160,10 @@ const deleteTask = async (req, res) => {
 };
 
 // @desc    Get available time slots for a specific date and duration
-// @route   GET /api/tasks/available-slots?date=YYYY-MM-DD&duration=MINUTES
+// @route   GET /api/tasks/available-slots?date=YYYY-MM-DD&duration=MINUTES&taskId=OPTIONAL_TASK_ID
 const getAvailableTaskSlots = async (req, res) => {
   try {
-    const { date, duration } = req.query;
+    const { date, duration, taskId } = req.query;
 
     // Validate date parameter
     if (!date) {
@@ -193,7 +193,8 @@ const getAvailableTaskSlots = async (req, res) => {
     }
 
     // Get available slots for the user
-    const availableSlots = await getAvailableSlots(req.user.id, date, durationMinutes);
+    // Pass taskId as excludeTaskId so the currently edited task is excluded from busy slots
+    const availableSlots = await getAvailableSlots(req.user.id, date, durationMinutes, taskId || null);
 
     res.json(availableSlots);
   } catch (error) {

@@ -21,8 +21,12 @@ const overlaps = (aStart, aEnd, bStart, bEnd) => {
  * Get all busy time slots for a given user on a specific date.
  * Returns an array of { start: Date, end: Date } objects representing occupied times.
  * Checks: local events, Google Calendar, and scheduled tasks.
+ * 
+ * @param {string} userId - The user's ID
+ * @param {string} dateStr - Date in YYYY-MM-DD format
+ * @param {string|null} excludeTaskId - Optional task ID to exclude from busy slots (for editing scenarios)
  */
-const getBusySlots = async (userId, dateStr) => {
+const getBusySlots = async (userId, dateStr, excludeTaskId = null) => {
     try {
         const user = await User.findById(userId);
         if (!user) return [];
@@ -58,10 +62,17 @@ const getBusySlots = async (userId, dateStr) => {
         }
 
         // 2) Get scheduled tasks for this user on this date
-        const scheduledTasks = await Task.find({
+        // Exclude the currently edited task if excludeTaskId is provided
+        const taskQuery = {
             user: user._id,
             scheduledStart: { $gte: dayStart, $lt: dayEnd }
-        });
+        };
+
+        if (excludeTaskId) {
+            taskQuery._id = { $ne: excludeTaskId };
+        }
+
+        const scheduledTasks = await Task.find(taskQuery);
 
         for (const task of scheduledTasks) {
             if (task.scheduledStart && task.scheduledEnd) {
@@ -123,11 +134,12 @@ const getBusySlots = async (userId, dateStr) => {
  * Calculate available time slots for a given date and duration.
  * dateStr: YYYY-MM-DD format
  * durationMinutes: number of minutes needed
+ * excludeTaskId: optional task ID to exclude from busy slots (for editing scenarios)
  * Returns: array of { start: Date, end: Date, label: string }
  */
-const getAvailableSlots = async (userId, dateStr, durationMinutes) => {
+const getAvailableSlots = async (userId, dateStr, durationMinutes, excludeTaskId = null) => {
     try {
-        const busySlots = await getBusySlots(userId, dateStr);
+        const busySlots = await getBusySlots(userId, dateStr, excludeTaskId);
 
         // Parse date string and create day bounds (9 AM to 10 PM by default)
         const [year, month, day] = dateStr.split('-').map(Number);
