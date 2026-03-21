@@ -9,13 +9,19 @@ const generateToken = (id) => {
     });
 };
 
-const buildSafeAuthUserPayload = (user) => ({
-    _id: user.id,
-    username: user.username,
-    email: user.email,
-    hasGoogleCalendar: !!user.googleRefreshToken,
-    token: generateToken(user._id),
-});
+const buildSafeAuthUserPayload = (user) => {
+    // Both user._id (MongoDB ID) and user.id (from toJSON transform) should work
+    const userId = user.id || user._id;
+    console.log('Backend User ID:', userId, '(type:', typeof userId + ')');
+    
+    return {
+        id: userId,
+        username: user.username,
+        email: user.email,
+        hasGoogleCalendar: !!user.googleRefreshToken,
+        token: generateToken(userId),
+    };
+};
 
 // @desc    Register new user
 // @route   POST /api/users/register

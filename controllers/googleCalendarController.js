@@ -217,6 +217,7 @@ const getFreeBusy = async (req, res) => {
         const { emails, timeMin, timeMax, excludeEventId } = req.body;
         const currentUserId = req.user.id;
 
+        console.log('Backend User ID:', currentUserId, '(type:', typeof currentUserId + ')');
         console.log('🔒 FreeBusy request for user:', currentUserId);
         console.log('📧 Checking availability for emails:', emails);
         console.log('⏰ Time range:', timeMin, 'to', timeMax);
