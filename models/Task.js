@@ -23,6 +23,7 @@ const taskSchema = new mongoose.Schema(
     estimatedMinutes: { type: Number, default: 0 },
     scheduledStart: { type: Date },
     scheduledEnd: { type: Date },
+    googleEventId: { type: String },
     creditedEstimatedTime: { type: Boolean, default: false },
 
     user: {

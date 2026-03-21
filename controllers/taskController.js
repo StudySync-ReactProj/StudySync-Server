@@ -2,10 +2,58 @@ const Task = require('../models/Task');
 const StudySession = require('../models/StudySession');
 const { isTimeSlotAvailable } = require('../helpers/calendarConflict');
 const { getAvailableSlots } = require('../helpers/availabilitySlots');
+const { google } = require('googleapis');
+const { OAuth2Client } = require('google-auth-library');
 
 // Helper to get local date key YYYY-MM-DD
 const getISODateLocal = (d = new Date()) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+const getTaskGoogleCalendarClient = (user) => {
+  const hasGoogleConnection = !!(user?.googleRefreshToken || user?.googleAccessToken);
+  if (!hasGoogleConnection) return null;
+
+  const oauth2Client = new OAuth2Client(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI
+  );
+
+  oauth2Client.setCredentials({
+    refresh_token: user.googleRefreshToken,
+    access_token: user.googleAccessToken
+  });
+
+  return google.calendar({ version: 'v3', auth: oauth2Client });
+};
+
+const buildGoogleEventFromTask = (task) => {
+  const taskStart = task.scheduledStart ? new Date(task.scheduledStart) : null;
+  if (!taskStart || !task.estimatedMinutes || Number(task.estimatedMinutes) <= 0) return null;
+
+  const taskEnd = task.scheduledEnd
+    ? new Date(task.scheduledEnd)
+    : new Date(taskStart.getTime() + Number(task.estimatedMinutes) * 60000);
+
+  return {
+    summary: task.title,
+    description: task.taskNotes || '',
+    extendedProperties: {
+      private: {
+        source: 'StudySyncTask',
+        taskId: task._id.toString()
+      }
+    },
+    start: {
+      dateTime: taskStart.toISOString(),
+      timeZone: 'Asia/Jerusalem'
+    },
+    end: {
+      dateTime: taskEnd.toISOString(),
+      timeZone: 'Asia/Jerusalem'
+    }
+  };
+};
 
 // @desc    Get all tasks
 // @route   GET /api/tasks
@@ -22,7 +70,8 @@ const getTasks = async (req, res) => {
 // @route   POST /api/tasks
 const createTask = async (req, res) => {
   try {
-    const input = { ...req.body };
+    const { scheduleInCalendar, ...restBody } = req.body;
+    const input = { ...restBody };
 
     // If estimatedMinutes > 0 and scheduledStart provided, compute scheduledEnd
     if (input.estimatedMinutes && Number(input.estimatedMinutes) > 0 && input.scheduledStart) {
@@ -45,6 +94,32 @@ const createTask = async (req, res) => {
     });
 
     const savedTask = await newTask.save();
+
+    const shouldScheduleInCalendar = scheduleInCalendar === true;
+    const hasGoogleConnection = !!(req.user.googleRefreshToken || req.user.googleAccessToken);
+
+    if (shouldScheduleInCalendar && hasGoogleConnection && savedTask.scheduledStart && savedTask.estimatedMinutes > 0) {
+      try {
+        const calendar = getTaskGoogleCalendarClient(req.user);
+        const googleEvent = buildGoogleEventFromTask(savedTask);
+
+        if (!calendar || !googleEvent) {
+          throw new Error('Task missing scheduling fields or user not connected to Google');
+        }
+
+        const response = await calendar.events.insert({
+          calendarId: 'primary',
+          resource: googleEvent
+        });
+
+        if (response?.data?.id) {
+          savedTask.googleEventId = response.data.id;
+          await savedTask.save();
+        }
+      } catch (googleError) {
+        console.error('Failed to sync task to Google Calendar:', googleError.message);
+      }
+    }
 
     // If task created as Completed and needs crediting (created completed without timer)
     if (savedTask.status === 'Completed') {
@@ -81,7 +156,8 @@ const updateTask = async (req, res) => {
       return res.status(401).json({ message: 'User not authorized' });
     }
 
-    const input = { ...req.body };
+    const { syncToGoogle, scheduleInCalendar, ...restBody } = req.body;
+    const input = { ...restBody };
 
     // Determine if we need to compute scheduledEnd (if estimatedMinutes > 0 and scheduledStart provided)
     let newScheduledStart = null;
@@ -115,6 +191,51 @@ const updateTask = async (req, res) => {
 
     // Perform update
     const updatedTask = await Task.findByIdAndUpdate(req.params.id, input, { new: true });
+
+    const shouldSyncToGoogle = syncToGoogle === true || scheduleInCalendar === true;
+    const hasGoogleConnection = !!(req.user.googleRefreshToken || req.user.googleAccessToken);
+
+    const titleChanged = input.title !== undefined;
+    const timeChanged = input.scheduledStart !== undefined || input.estimatedMinutes !== undefined || input.scheduledEnd !== undefined;
+    const shouldPatchExistingGoogleEvent = !!updatedTask.googleEventId && (titleChanged || timeChanged);
+
+    if (hasGoogleConnection && shouldPatchExistingGoogleEvent) {
+      try {
+        const calendar = getTaskGoogleCalendarClient(req.user);
+        const googleEvent = buildGoogleEventFromTask(updatedTask);
+
+        if (calendar && googleEvent) {
+          await calendar.events.patch({
+            calendarId: 'primary',
+            eventId: updatedTask.googleEventId,
+            resource: googleEvent
+          });
+        }
+      } catch (googleError) {
+        console.error('Failed to update task in Google Calendar:', googleError.message);
+      }
+    }
+
+    if (hasGoogleConnection && shouldSyncToGoogle && !updatedTask.googleEventId) {
+      try {
+        const calendar = getTaskGoogleCalendarClient(req.user);
+        const googleEvent = buildGoogleEventFromTask(updatedTask);
+
+        if (calendar && googleEvent) {
+          const response = await calendar.events.insert({
+            calendarId: 'primary',
+            resource: googleEvent
+          });
+
+          if (response?.data?.id) {
+            updatedTask.googleEventId = response.data.id;
+            await updatedTask.save();
+          }
+        }
+      } catch (googleError) {
+        console.error('Failed to create Google Calendar event for task on update:', googleError.message);
+      }
+    }
 
     // Handle completion crediting logic when status becomes Completed
     const prevStatus = task.status;
@@ -150,6 +271,20 @@ const deleteTask = async (req, res) => {
 
     if (task.user.toString() !== req.user.id) {
       return res.status(401).json({ message: 'User not authorized' });
+    }
+
+    if (task.googleEventId) {
+      try {
+        const calendar = getTaskGoogleCalendarClient(req.user);
+        if (calendar) {
+          await calendar.events.delete({
+            calendarId: 'primary',
+            eventId: task.googleEventId
+          });
+        }
+      } catch (googleError) {
+        console.error('Failed to delete task from Google Calendar:', googleError.message);
+      }
     }
 
     await task.deleteOne();

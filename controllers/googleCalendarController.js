@@ -627,24 +627,49 @@ const listGoogleEvents = async (req, res) => {
         try {
             const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-            // Calculate time range (next 7 days)
-            const now = new Date();
-            const sevenDaysFromNow = new Date();
-            sevenDaysFromNow.setDate(now.getDate() + 7);
+            // Calculate time range with support for frontend-provided dates
+            let timeMin, timeMax;
+
+            // Check for query parameters from frontend for custom date range
+            if (req.query.timeMin && req.query.timeMax) {
+                timeMin = new Date(req.query.timeMin);
+                timeMax = new Date(req.query.timeMax);
+                console.log('📅 Using frontend-provided date range:', timeMin.toISOString(), 'to', timeMax.toISOString());
+            } else {
+                // Default: Show events from 3 months ago to 1 month in the future
+                const now = new Date();
+                
+                // Start: 3 months ago
+                const threeMonthsAgo = new Date();
+                threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+                
+                // End: 1 month from now
+                const oneMonthFromNow = new Date();
+                oneMonthFromNow.setMonth(oneMonthFromNow.getMonth() + 1);
+                
+                timeMin = threeMonthsAgo;
+                timeMax = oneMonthFromNow;
+                
+                console.log('📅 Using default date range (3 months back to 1 month forward):', timeMin.toISOString(), 'to', timeMax.toISOString());
+            }
 
             const response = await calendar.events.list({
                 calendarId: 'primary',
-                timeMin: now.toISOString(),
-                timeMax: sevenDaysFromNow.toISOString(),
+                timeMin: timeMin.toISOString(),
+                timeMax: timeMax.toISOString(),
                 maxResults: 100,
                 singleEvents: true,
                 orderBy: 'startTime'
             });
 
             const events = response.data.items || [];
+            const nonTaskEvents = events.filter(event => {
+                const source = event.extendedProperties?.private?.source;
+                return source !== 'StudySyncTask';
+            });
 
             // Transform Google Calendar events
-            const transformedEvents = events.map(event => {
+            const transformedEvents = nonTaskEvents.map(event => {
                 // Check if this is an all-day event (Google uses 'date' instead of 'dateTime')
                 const isAllDay = !!event.start.date;
                 
