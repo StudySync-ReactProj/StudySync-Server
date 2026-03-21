@@ -1,6 +1,7 @@
 const Task = require('../models/Task');
 const Event = require('../models/Event');
 const User = require('../models/User');
+const mongoose = require('mongoose');
 const { google } = require('googleapis');
 const { OAuth2Client } = require('google-auth-library');
 
@@ -69,7 +70,11 @@ const getBusySlots = async (userId, dateStr, excludeTaskId = null) => {
         };
 
         if (excludeTaskId) {
-            taskQuery._id = { $ne: excludeTaskId };
+            // Convert string ID to ObjectId if necessary
+            const excludeId = mongoose.Types.ObjectId.isValid(excludeTaskId)
+                ? new mongoose.Types.ObjectId(excludeTaskId)
+                : excludeTaskId;
+            taskQuery._id = { $ne: excludeId };
         }
 
         const scheduledTasks = await Task.find(taskQuery);
@@ -141,10 +146,10 @@ const getAvailableSlots = async (userId, dateStr, durationMinutes, excludeTaskId
     try {
         const busySlots = await getBusySlots(userId, dateStr, excludeTaskId);
 
-        // Parse date string and create day bounds (9 AM to 10 PM by default)
+        // Parse date string and create day bounds (7 AM to Midnight)
         const [year, month, day] = dateStr.split('-').map(Number);
-        const dayStart = new Date(year, month - 1, day, 9, 0, 0); // 9 AM
-        const dayEnd = new Date(year, month - 1, day, 22, 0, 0);   // 10 PM
+        const dayStart = new Date(year, month - 1, day, 7, 0, 0); // 7 AM
+        const dayEnd = new Date(year, month - 1, day + 1, 0, 0, 0);   // Midnight
 
         // Sort busy slots by start time
         busySlots.sort((a, b) => a.start - b.start);

@@ -180,10 +180,8 @@ const updateTask = async (req, res) => {
 
     // If a scheduling slot is being set/changed, validate conflicts
     if (newScheduledStart && newScheduledEnd) {
-      // Exclude current task's existing scheduled time (so updating the same task won't conflict with itself)
-      const excludeRange = (task.scheduledStart && task.scheduledEnd) ? { start: task.scheduledStart, end: task.scheduledEnd } : undefined;
-
-      const available = await isTimeSlotAvailable(req.user.id, newScheduledStart, newScheduledEnd, { excludeTimeRange: excludeRange });
+      // Exclude current task to avoid self-conflict when checking availability
+      const available = await isTimeSlotAvailable(req.user.id, newScheduledStart, newScheduledEnd, { excludeTaskId: req.params.id });
       if (!available) {
         return res.status(409).json({ message: 'Selected time slot is not available' });
       }

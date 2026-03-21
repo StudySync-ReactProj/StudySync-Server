@@ -1,6 +1,8 @@
 // filepath: /Users/shahar/react/StudySync-Server/helpers/calendarConflict.js
 const Event = require('../models/Event');
+const Task = require('../models/Task');
 const User = require('../models/User');
+const mongoose = require('mongoose');
 const { google } = require('googleapis');
 const { OAuth2Client } = require('google-auth-library');
 
@@ -20,7 +22,10 @@ const overlaps = (aStart, aEnd, bStart, bEnd) => {
 /**
  * Check whether the given time slot [start, end) is free for the given user.
  * userParam can be either a User document or a user id string.
- * options: { excludeEventId, excludeTimeRange: { start, end } } - optional local event id or time range to ignore
+ * options: { excludeEventId, excludeTaskId, excludeTimeRange: { start, end } }
+ *   - excludeEventId: specific local event id to ignore
+ *   - excludeTaskId: specific task id to ignore
+ *   - excludeTimeRange: time range to ignore (useful for current item's existing slot)
  * Returns true if available, false if conflict found.
  */
 const isTimeSlotAvailable = async (userParam, start, end, options = {}) => {
@@ -73,7 +78,39 @@ const isTimeSlotAvailable = async (userParam, start, end, options = {}) => {
             return false;
         }
 
-        // 2) Check Google Calendar busy times (if connected)
+        // 2) Check scheduled tasks for conflicts
+        const taskQueryAnd = [
+            { user: user._id },
+            { scheduledStart: { $exists: true, $ne: null } },
+            { scheduledEnd: { $exists: true, $ne: null } },
+            { scheduledStart: { $lt: newEnd } },
+            { scheduledEnd: { $gt: newStart } }
+        ];
+
+        // Exclude a specific task id
+        if (options.excludeTaskId) {
+            const excludeTaskId = mongoose.Types.ObjectId.isValid(options.excludeTaskId)
+                ? new mongoose.Types.ObjectId(options.excludeTaskId)
+                : options.excludeTaskId;
+            taskQueryAnd.push({ _id: { $ne: excludeTaskId } });
+        }
+
+        // Exclude tasks that match the excluded time range
+        if (options.excludeTimeRange && options.excludeTimeRange.start && options.excludeTimeRange.end) {
+            const exStart = new Date(options.excludeTimeRange.start);
+            const exEnd = new Date(options.excludeTimeRange.end);
+            // Exclude tasks whose start and end equal the excluded range
+            taskQueryAnd.push({ $or: [{ scheduledStart: { $ne: exStart } }, { scheduledEnd: { $ne: exEnd } }] });
+        }
+
+        const taskQuery = { $and: taskQueryAnd };
+
+        const taskConflicts = await Task.find(taskQuery).limit(1);
+        if (taskConflicts.length > 0) {
+            return false;
+        }
+
+        // 3) Check Google Calendar busy times (if connected)
         if (user.googleRefreshToken) {
             try {
                 const oauth2Client = getOAuth2Client();
